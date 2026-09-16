@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Teleprompter — Building Autonomous AI Agents (Day 3)</title>
+<style>
+  :root {
+    --font-size: 44px;
+    --bg: #0b0e14;
+    --fg: #f5f7fa;
+    --accent: #f99d1f;
+    --blue: #2f6fd0;
+    --dim: #8a93a3;
+    --panel: #161b26;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--fg);
+    font-family: "Segoe UI", Arial, sans-serif; overflow: hidden; }
+
+  #progress { position: fixed; top: 0; left: 0; height: 4px; width: 0%;
+    background: var(--accent); z-index: 30; transition: width .15s linear; }
+
+  /* reading guide band */
+  #guide { position: fixed; left: 0; right: 38%; top: 32%; height: 20%;
+    border-top: 1px solid rgba(249,157,31,.35);
+    border-bottom: 1px solid rgba(249,157,31,.35);
+    pointer-events: none; z-index: 10; }
+  body.no-panel #guide { right: 0; }
+  #guide::before, #guide::after {
+    content: ""; position: absolute; top: 50%; transform: translateY(-50%);
+    border: 12px solid transparent; }
+  #guide::before { left: 6px; border-left-color: rgba(249,157,31,.6); }
+  #guide::after { right: 6px; border-right-color: rgba(249,157,31,.6); }
+
+  #scroller { position: absolute; top: 0; left: 0; bottom: 0; right: 38%;
+    overflow-y: auto; scrollbar-width: none; }
+  #scroller::-webkit-scrollbar { display: none; }
+  body.no-panel #scroller { right: 0; }
+
+  /* side-by-side slide panel */
+  #slidePanel { position: fixed; top: 0; right: 0; bottom: 0; width: 38%;
+    background: #05070c; border-left: 1px solid #262e3f; z-index: 15;
+    display: flex; flex-direction: column; padding: 14px 14px 64px; gap: 10px; }
+  body.no-panel #slidePanel { display: none; }
+  #slideCounter { color: var(--accent); font-weight: 700; font-size: 15px;
+    text-align: center; letter-spacing: .04em; }
+  #slideImg { width: 100%; flex: 1; min-height: 0; object-fit: contain;
+    background: #000; border-radius: 8px; border: 1px solid #262e3f; cursor: pointer; }
+  #nextWrap { display: flex; align-items: center; gap: 10px; }
+  #nextWrap span { color: var(--dim); font-size: 12px; white-space: nowrap; }
+  #nextImg { width: 130px; border-radius: 4px; border: 1px solid #262e3f; opacity: .75; }
+  #content { max-width: 1100px; margin: 0 auto; padding: 36vh 48px 70vh;
+    font-size: var(--font-size); line-height: 1.45; font-weight: 600;
+    text-align: left; }
+  #content.flip-x { transform: scaleX(-1); }
+  #content.flip-y { transform: scaleY(-1); }
+  #content.flip-x.flip-y { transform: scaleX(-1) scaleY(-1); }
+
+  #content h2 { color: var(--accent); font-size: 1.15em; margin: 1.6em 0 .5em;
+    border-bottom: 2px solid rgba(249,157,31,.4); padding-bottom: .2em; }
+  #content h3 { color: #7db3f5; font-size: .85em; margin: 1.4em 0 .35em; }
+  #content p { margin: .55em 0; }
+  #content p.stage { color: var(--dim); font-style: italic; font-weight: 400;
+    font-size: .62em; letter-spacing: .02em; }
+  #content .spacer { height: .8em; }
+
+  /* control bar */
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: rgba(22,27,38,.92); backdrop-filter: blur(6px);
+    padding: 10px 16px; border-top: 1px solid #262e3f;
+    font-size: 13px; transition: transform .3s ease; }
+  #bar.hidden { transform: translateY(100%); }
+  #bar button { background: #232b3d; color: var(--fg); border: 1px solid #38435c;
+    border-radius: 6px; padding: 7px 14px; font-size: 13px; cursor: pointer; }
+  #bar button:hover { background: #2e3950; border-color: var(--accent); }
+  #bar button.primary { background: var(--accent); border-color: var(--accent);
+    color: #1a1200; font-weight: 700; min-width: 88px; }
+  #bar label { display: flex; align-items: center; gap: 8px; color: var(--dim);
+    white-space: nowrap; }
+  #bar input[type="range"] { width: 110px; accent-color: var(--accent); }
+  #bar .val { color: var(--fg); min-width: 40px; }
+  #bar .spacer-flex { flex: 1; }
+  #bar .keys { color: #5c6575; font-size: 11.5px; }
+  kbd { background: #232b3d; border: 1px solid #38435c; border-radius: 4px;
+    padding: 1px 5px; font-family: inherit; }
+
+  /* edit overlay */
+  #editor { position: fixed; inset: 0; background: rgba(6,8,12,.96); z-index: 40;
+    display: none; flex-direction: column; padding: 28px; gap: 12px; }
+  #editor.open { display: flex; }
+  #editor h1 { font-size: 18px; color: var(--accent); }
+  #editor .hint { color: var(--dim); font-size: 12.5px; }
+  #editArea { flex: 1; background: var(--panel); color: var(--fg);
+    border: 1px solid #38435c; border-radius: 8px; padding: 16px;
+    font-family: Consolas, monospace; font-size: 14px; line-height: 1.5;
+    resize: none; }
+  #editor .row { display: flex; gap: 10px; justify-content: flex-end; }
+  #editor button { background: #232b3d; color: var(--fg); border: 1px solid #38435c;
+    border-radius: 6px; padding: 8px 18px; cursor: pointer; }
+  #editor button.apply { background: var(--accent); border-color: var(--accent);
+    color: #1a1200; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<div id="progress"></div>
+<div id="guide"></div>
+
+<div id="scroller">
+  <div id="content"></div>
+</div>
+
+<div id="slidePanel">
+  <div id="slideCounter">Slide 1 / 50</div>
+  <img id="slideImg" src="teleprompter_slides/slide01.png" alt="Current slide"
+       title="Click to advance to next slide">
+  <div id="nextWrap">
+    <span>NEXT &#9656;</span>
+    <img id="nextImg" src="teleprompter_slides/slide02.png" alt="Next slide">
+  </div>
+</div>
+
+<div id="bar">
+  <button id="playBtn" class="primary">&#9654; Play</button>
+  <label>Speed <input id="speed" type="range" min="20" max="220" value="80">
+    <span class="val" id="speedVal">80</span></label>
+  <label>Font <input id="fontSize" type="range" min="24" max="96" value="44">
+    <span class="val" id="fontVal">44</span></label>
+  <button id="flipX" title="Mirror horizontally (for beam-splitter rig)">&#8646; Flip H</button>
+  <button id="flipY" title="Flip vertically">&#8693; Flip V</button>
+  <button id="prevSlide" title="Jump to previous slide segment">&#9666; Slide</button>
+  <button id="nextSlide" title="Jump to next slide segment">Slide &#9656;</button>
+  <button id="resetBtn" title="Back to top">&#10548; Top</button>
+  <button id="panelBtn" title="Show/hide slide panel">&#9635; Panel</button>
+  <button id="editBtn" title="Edit script">&#9998; Script</button>
+  <div class="spacer-flex"></div>
+  <span class="keys"><kbd>Space</kbd> play &nbsp;<kbd>&uarr;</kbd><kbd>&darr;</kbd> speed
+    &nbsp;<kbd>&larr;</kbd><kbd>&rarr;</kbd> font &nbsp;<kbd>PgUp</kbd><kbd>PgDn</kbd> slide
+    &nbsp;<kbd>F</kbd> fullscreen &nbsp;<kbd>H</kbd>ide bar</span>
+</div>
+
+<div id="editor">
+  <h1>Teleprompter Script</h1>
+  <div class="hint">Formatting: <b># Section</b> header &nbsp;·&nbsp; <b>## Sub-section</b> &nbsp;·&nbsp;
+    <b>[stage direction]</b> dim italic &nbsp;·&nbsp; blank line = pause beat</div>
+  <textarea id="editArea" spellcheck="false"></textarea>
+  <div class="row">
+    <button id="cancelEdit">Cancel</button>
+    <button id="applyEdit" class="apply">Apply &amp; Close</button>
+  </div>
+</div>
+
+<script id="default-script" type="text/plain">
+# Building Autonomous AI Agents — Day 3 Lecture Script
+## OpenClaw · Hermes · NanoClaw
+
+[Slide 1 — Title. Welcome the class as they settle.]
+
+Good morning everyone, and welcome to Day 3 of Building Autonomous AI Agents.
+
+Today is built around three technologies: OpenClaw for orchestration, Hermes as our model layer, and NanoClaw for edge deployment.
+
+Along the way we will cover four cross-cutting concerns: heartbeats, skill writing, channels, and a custom agent-to-agent protocol.
+
+# Course Context
+
+[Slide 2 — Three-day progression diagram.]
+
+Quick recap of where we are. Day 1: you built an agent. Day 2: you built an agent team. Today, Day 3: we build an agent ecosystem.
+
+Concretely, that means building MyShopper — a personal buying agent owned by the customer. Unlike the agents from Day 2, MyShopper represents the customer, not AgentMart.
+
+The customer talks to MyShopper over Telegram, WhatsApp or WebChat. MyShopper then talks to the AgentMart ecosystem — the shopping, pricing, inventory, fulfilment and order agents — over A2A.
+
+# Agenda
+
+[Slide 3 — Skim the agenda; point out the three breaks and the combined lab at the end.]
+
+Here's our day. Parts one to three this morning cover the three layers. After that we go deep on heartbeats and skills, then channels, then the A2A protocol — and we close with a twenty-minute combined lab that ties everything together.
+
+If you're running this across three sessions instead: session A covers parts one to three, session B parts four and five, session C parts six, seven and the final lab.
+
+# Learning Objectives
+
+[Slide 4 — Read the six objectives aloud, briefly.]
+
+By the end of today you will be able to: explain how the three layers fit together; design a heartbeat mechanism, including for edge agents on unreliable networks; write skills whose descriptions reliably trigger correct invocation; wire agents to messaging and voice channels; design a custom A2A protocol on Redis Streams plus MCP; and build the full end-to-end flow from a user message to a skill invocation and back.
+
+# The Stack at a Glance
+
+[Slide 5 — Point at each layer, then the four concerns.]
+
+Here's the mental model for the whole day. OpenClaw is the orchestration layer — a Redis Streams plus MCP multi-agent backbone. Hermes is the model layer — an open-weight function-calling model. NanoClaw is the edge layer — Pi-class on-device deployment.
+
+And four concerns make this trustworthy in production: heartbeats give us trust in state; skill writing, trust in capability; channels, trust in delivery; and our custom A2A, trust in coordination.
+
+By the end of the day you will have built a small system that touches every single one of these pieces.
+
+# The Three Layers: a Comparison
+
+[Slide 6 — Comparison table: OpenClaw vs Hermes vs NanoClaw.]
+
+Let's put the three layers side by side.
+
+OpenClaw is the orchestration layer — a Redis Streams plus MCP multi-agent backbone. It matters because messaging between agents is durable, replayable and multi-consumer. The watch-out: stream-topology design and Redis operational overhead.
+
+Hermes is the model layer — an open-weight function-calling model. It matters for cost, latency, and no vendor lock-in, with structured tool calls as a first-class output. The watch-out: smaller open models still trail frontier-model quality.
+
+NanoClaw is the edge layer — a slimmed OpenClaw plus Hermes runtime on Pi-class hardware. It matters for privacy, offline operation, and zero per-call cost — data stays on device. The watch-out: tight RAM, quantization, and slower on-device inference.
+
+One stack, three layers. The rest of today is about making them trustworthy — heartbeats, skills, channels, and A2A.
+
+# Part 1 — OpenClaw: the Orchestration Layer
+
+[Slide 7 — Section divider. 45 minutes.]
+
+Part one. OpenClaw — the orchestration layer.
+
+[Slide 8 — Live demo: two agents talking via Redis Streams.]
+
+The backbone of OpenClaw is Redis Streams plus MCP. Redis Streams give us durable, replayable, multi-consumer messaging between agents. MCP standardises how agents expose and call tools.
+
+Watch the demo: Agent A publishes a message, and it appears in Agent B's inbox stream — consumed independently, at B's own pace.
+
+Two ecosystem plug-ins live at this layer. ClawHub — the skill marketplace, where reusable skills are published and discovered. And MoltGuard — the guardrail proxy, which sits in the request path doing policy and safety checks.
+
+# Part 2 — Hermes: the Model Layer
+
+[Slide 9 — Section divider. 45 minutes.]
+
+Part two. Hermes — the model layer.
+
+[Slide 10 — Two columns: why open-weight / vs Claude and GPT.]
+
+Why does an open-weight function-calling model matter? Four reasons. Cost — there's no per-token API bill at agent scale. Latency — the model runs next to, or even on, the agent. No vendor lock-in — self-hosted and portable to edge hardware. And function calling is built in — structured tool use is a first-class output, not a prompt hack.
+
+Compared to Claude or GPT tool calling, the key check is the output format: does Hermes emit OpenAI-style tool_calls? That decides whether your agent framework needs a translation shim.
+
+In the hands-on, we'll get Hermes making a structured tool call through an OpenClaw agent.
+
+# Hermes Core Features: the Automation Engine
+
+[Slide 11 — Hermes core features: cron, kanban, subagent delegation.]
+
+Let's go deeper on Hermes' automation engine. First, natural-language cron — "every weekday at 9am, summarize my inbox and post to Slack" is all it takes. Agents can also self-schedule wake-ups, and script mode runs with zero LLM tokens.
+
+Second, kanban coordination — give seven agents a shared Kanban board and they start managing themselves. The board reads each profile's SOUL.md for name and role, and tasks flow proposed, in-progress, done — without you relaying anything.
+
+Third, subagent delegation — you talk to one lead agent, and it delegates to specialists. There's an installer that turns a fresh install into a nine-role dev team. Authority is enforced by toolset restrictions, not just system prompts — and the orchestrator grades work pass, rework or failed.
+
+Plus the supporting cast: self-improving skills — the agent writes its own skill files — three-layer memory with separate profiles, and safety controls: approval gates, rollback, and steer.
+
+# Hermes in the Wild: Automation Stories
+
+[Slide 12 — Community automation stories from the Hermes docs.]
+
+And this is running in production, not theory. Someone runs 28 cron jobs and 30-plus skills — including a 3am "dreaming" job that reads the day's conversations and writes tomorrow's context.
+
+Gumroad runs much of the business through an agent on a dedicated Mac — cron jobs check support tickets, watch X mentions, update finance docs — and every mistake becomes a dated policy rule the agent must read from then on.
+
+Twenty cron "signals" write to a daily ledger, then an agentic triage job highlights what matters.
+
+On the teams side: seven agents given a shared Kanban board started managing themselves. Hermes Swarm runs teams of agents 24/7 — peer-to-peer messaging, delegating work, self-scheduling wake-ups. And Nous Research themselves run 12 Hermes instances in parallel, every day, to build Hermes.
+
+The reference: hermes-agent.nousresearch.com/docs/user-stories — 326 stories, 15 categories.
+
+# Hermes Deep Cuts: LSP, Curator, SOUL.md & Media
+
+[Slide 13 — Hermes deep cuts: LSP, curator, SOUL.md, media generation.]
+
+A few more Hermes core features worth knowing. LSP — Hermes runs about twenty real language servers — pyright, typescript-language-server, rust-analyzer, gopls, clangd — as background subprocesses. After every write or patch, the agent sees only the new diagnostics its edit introduced: type errors, undefined names, missing imports. That's the same architecture top-tier coding agents use, shipped self-contained.
+
+Curator — background maintenance for agent-created skills. It tracks usage, moves long-unused skills from active to stale to archived, can consolidate near-duplicates with an opt-in LLM pass, takes snapshots you can roll back, and you can pin skills to protect them. It keeps the self-improvement loop from polluting the skill catalog.
+
+Personality — SOUL.md is slot one of the system prompt: the agent's identity. It loads only from the Hermes home directory, so it's predictable. Slash-personality presets — teacher, technical, creative, pirate — are session overlays. The rule of thumb: SOUL.md is who the agent is; AGENTS.md is how the project works.
+
+And media: image generation is built in via FAL.ai — eleven models including FLUX 2, GPT-Image, Ideogram V3 and Recraft V4. Video generation today comes through skills and integrations — for example the Higgsfield UGC ad studio — the same extensibility story as MCP tools.
+
+# Hermes Persistent Memory
+
+[Slide 14 — Persistent memory: MEMORY.md and USER.md.]
+
+Hermes has bounded, curated memory that persists across sessions. Two files: MEMORY.md — the agent's own notes about your environment, conventions and lessons learned, capped at 2,200 characters — and USER.md — your profile: preferences and communication style, capped at about 1,375. Both are injected into the system prompt as a frozen snapshot at session start — which preserves the prefix cache — while the memory tool's add, replace and remove actions write through to disk immediately for the next session.
+
+It's bounded by design: when memory is full, the agent has to consolidate entries in the same turn before adding; duplicates are rejected; and every entry is scanned for injection and exfiltration patterns, because it lands in the system prompt.
+
+Beyond the two files, session_search gives FTS5 full-text search over all past sessions — free, no LLM call. So: memory is for key facts that should always be in context; session search is for "did we discuss this last week?"
+
+And the consent angle: set write_approval and every save is staged for your review — that's the answer to "the agent saved a wrong assumption about me."
+
+# Honcho Memory: Dialectic User Modeling
+
+[Slide 15 — Honcho: dialectic user modeling.]
+
+If you outgrow two text files, there's Honcho — an AI-native memory backend, one of eight memory-provider plugins. Instead of key-value storage, Honcho reasons about conversations after they happen — it calls this dialectic reasoning — and builds a running model of who the user is: preferences, goals, patterns.
+
+Two layers get injected into the prompt: base context — the session summary, user representation and peer card — plus a dialectic supplement: what matters right now. The dialectic can run multi-pass: assess, self-audit, reconcile.
+
+A standout feature for multi-agent setups: per-peer isolation. Your coding assistant and your personal assistant each maintain their own profile of you — no cross-contamination.
+
+And Honcho is just one of eight providers — Mem0, Hindsight, Supermemory and friends — they all run alongside the built-in memory, never replacing it. Setup is one command: hermes memory setup.
+
+# Hermes Plugins: Extend Everything
+
+[Slide 16 — The plugin system.]
+
+Finally, plugins — how you extend everything. Drop a directory into ~/.hermes/plugins with a plugin.yaml and a register function, and your tools appear alongside the built-ins — no core-code changes.
+
+The surface is wide: tools, 27 lifecycle hooks — including the kanban events — slash commands, CLI commands, bundled skills, gateway platforms, image-gen and video-gen backends, memory providers, context engines, model providers, approval transports, and MCP calls.
+
+Four plugin types: general plugins — enable any combination; memory providers and context engines — one active each; model providers — pick one.
+
+Security is taken seriously: third-party plugins are opt-in — nothing runs until you allow-list it. Installs are SHA-pinned, there's a curated catalog, every install gets a static security scan — dangerous verdicts are blocked outright — and declared capabilities need explicit consent, with re-consent on update. That's exactly the OWASP posture we'll see in Part 5.
+
+# Part 3 — NanoClaw: the Edge Layer
+
+[Slide 17 — Section divider. 45 minutes.]
+
+Part three. NanoClaw — the edge layer.
+
+[Slide 18 — Constraints on the left; edge vs cloud on the right.]
+
+Pi-class hardware imposes real constraints. Memory is tight, which forces small models. Quantization — Hermes runs as a quantized build to fit. And latency — on-device inference trades speed for independence.
+
+Watch the demo: we deploy a slimmed-down OpenClaw plus Hermes agent on NanoClaw.
+
+The trade-offs versus cloud-hosted agents: edge wins on privacy, offline operation, zero per-call cost, and data staying on device. Cloud wins on model quality, throughput, and zero hardware management.
+
+Hold that thought — this trade-off comes back in Part 4, where edge connectivity breaks naive heartbeat assumptions, and in Part 6, where voice latency budgets force the cloud-versus-local choice.
+
+# Part 4 — Heartbeat Mechanisms
+
+[Slide 19 — Section divider. 60 minutes. Deep dive.]
+
+Part four. Heartbeats. This is our first deep dive.
+
+[Slide 20 — Three signals.]
+
+Three signals are constantly conflated. Liveness: is the process running at all? Readiness: can it currently accept work? Health: is it running within acceptable performance and error bounds?
+
+A process can be alive but not ready — or ready but unhealthy. Your detection design has to say explicitly which signal it tracks.
+
+[Slide 21 — Push vs pull.]
+
+Push versus pull. In the push model, the agent proactively pings the orchestrator on an interval. That's lower orchestrator load — but the agent must stay well-behaved. A hung agent that keeps beating looks alive.
+
+In the pull model, the orchestrator polls each agent. Simpler, more trustworthy failure detection — but it scales worse as your agent count grows.
+
+[Slide 22 — Interval and TTL.]
+
+Interval and TTL design. Too frequent, and you get noisy streams and wasted Redis throughput. Too infrequent, and failure detection is slow — work gets assigned to dead agents.
+
+The rule of thumb: TTL is roughly two to three times the heartbeat interval, tuned to the cost of reassigning work. Cheap reassignment? Shorter TTL, faster detection. Expensive reassignment? Longer TTL — tolerate transient misses.
+
+[Slide 23 — OpenClaw mechanics.]
+
+In OpenClaw specifically: the transport is either a dedicated Redis Stream per agent, or a TTL'd key per agent that expires if not refreshed.
+
+On the orchestrator side, a detection loop identifies a dead or unreachable agent and triggers reassignment of its work.
+
+And watch out for flapping agents — you need debounce logic. Require N consecutive misses before declaring an agent down. Single-miss detection causes thrashing: agents oscillate between up and down, and work gets needlessly reassigned.
+
+[Slide 24 — Edge case.]
+
+The edge case — literally. Intermittent connectivity on Pi-class hardware breaks all the naive assumptions.
+
+Use exponential backoff on reconnect attempts — don't hammer the orchestrator after a dropout. And cache last-known state, so the orchestrator doesn't prematurely kill or reassign work during a transient blip.
+
+The core trade-off: aggressive detection gives fast reassignment but more false positives; lenient detection gives fewer false positives but slower recovery.
+
+[Slide 25 — Lab: kill and detect. 15 minutes.]
+
+Lab time. One: write an agent process that pushes a heartbeat every N seconds. Two: write an orchestrator loop that flags an agent down after M consecutive missed beats. Three: kill the agent mid-session and measure detection time. Four: adjust N and M, retest, and discuss the trade-off curve.
+
+Discussion prompt: what N and M would you choose for a cloud-hosted agent versus a NanoClaw edge agent — and why?
+
+# Part 5 — Skill Writing
+
+[Slide 26 — Section divider. 60 minutes. Deep dive.]
+
+Part five. Skill writing — our second deep dive.
+
+[Slide 27 — Anatomy of a skill.]
+
+Every skill has two halves. Metadata — name, description, trigger conditions. And execution logic — the code that actually runs.
+
+Remember this line: the description is not documentation. It is the interface the agent's tool-selection step reads.
+
+If the description is wrong, the skill may never fire — no matter how good the code is.
+
+[Slide 28 — Bad vs good description.]
+
+Look at these two. Bad: "Handles data stuff." Vague descriptions cause missed or misfired invocations.
+
+Good: "Fetches current weather for a given city and date; use only when the user asks about weather conditions, not climate history." Specific scope, plus explicit when-to-use and when-not-to-use boundaries.
+
+Exercise: critique three or four deliberately weak skill descriptions and rewrite them. A good description names the action, the inputs, and the boundaries of when it applies.
+
+[Slide 29 — Security angle.]
+
+The security angle — this ties into the OWASP Agentic Applications guidance.
+
+Three rules. Sandboxing execution: isolate skill code so a malicious or buggy skill can't escalate privileges. Input validation: validate agent-generated parameters before execution — the model is an untrusted caller. Output validation: sanitize skill output before it re-enters the agent's context loop.
+
+[Slide 30 — Lab: make it fire. 15 minutes.]
+
+Lab. One: write a simple skill — a unit converter works fine — with a clear description. Two: register it and confirm correct invocation on a matching prompt. Three: vague-ify the description and retest — observe the misfire or no-invoke. Four: restore the description, add basic input validation, throw an adversarial input at it, and confirm rejection.
+
+# Part 6 — Channel Integration
+
+[Slide 31 — Section divider. 60 minutes.]
+
+Part six. Channel integration — messaging and voice.
+
+[Slide 32 — Messaging channels.]
+
+Telegram and WhatsApp. First, webhook versus long-polling ingestion — how an inbound message becomes an event on the OpenClaw Redis Stream.
+
+Second, session mapping — map the chat or session ID to an agent instance, so multi-turn conversation state stays coherent.
+
+Third, channel-specific quirks — message length limits, rich media like images and voice notes sent as files, delivery and read receipts.
+
+Fourth, rate limits — both platforms throttle aggressively, so send replies with retry and backoff.
+
+The demo: an inbound Telegram message hits an OpenClaw agent, triggers a skill invocation, and the reply round-trips back to the same chat.
+
+[Slide 33 — Voice channels.]
+
+Voice. Two integration patterns. Turn-based: record, transcribe, agent, synthesize, play. Or streaming: continuous ASR and TTS with barge-in support.
+
+Note where ASR and TTS sit relative to Hermes — transcription happens before the model call, synthesis after. The agent still reasons over text.
+
+The latency budget matters much more for voice than messaging — and that's what drives the cloud versus NanoClaw-local inference choice.
+
+And interruptions — barge-in and silence detection — that's a UX problem, not just a technical one.
+
+[Slide 34 — Channel abstraction.]
+
+Channel abstraction. Channels are a thin adapter layer — not baked into agent logic. The agent shouldn't know whether it's talking to Telegram, WhatsApp, or a microphone.
+
+Normalize inbound events — text, voice-transcribed-to-text, media — into one internal message format before they hit the Redis Stream.
+
+And this intersects with heartbeats: the channel adapter itself needs liveness tracking. A dead webhook listener is as bad as a dead agent.
+
+[Slide 35 — Lab: wire a channel. 10 minutes.]
+
+Lab. One: wire one messaging channel — Telegram or a WhatsApp sandbox account — to your Part 1 OpenClaw agent. Two: send a message that triggers the Part 5 skill, and confirm the reply round-trips correctly. Three: discuss — what would need to change to add a second channel without touching agent logic?
+
+# Part 7 — A2A Setup: a One-of-its-Kind Protocol
+
+[Slide 36 — Section divider. 60 minutes.]
+
+Part seven. A2A setup — a one-of-its-kind protocol.
+
+[Slide 37 — Why not off-the-shelf.]
+
+Why not just use an off-the-shelf A2A standard? The emerging landscape gives you agent-card discovery and task-based request-response protocols. But they assume infrastructure OpenClaw doesn't need — HTTP-centric, synchronous request-response.
+
+OpenClaw's differentiator is Redis Streams as the transport. Durable, replayable, multi-consumer messaging for free — most A2A protocols have to bolt that on top of plain HTTP.
+
+The design goal: an A2A layer that is natively stream-based, heartbeat-aware, and channel-agnostic — not a generic point-to-point RPC.
+
+[Slide 38 — Anatomy of the protocol.]
+
+Anatomy of the custom protocol. The message envelope: sender agent ID, recipient agent ID or broadcast topic, task ID, payload, and a correlation ID for multi-turn task tracking.
+
+Stream topology: one stream per agent inbox, versus shared topic streams with consumer groups. Think through the fan-out versus fan-in trade-offs.
+
+Task lifecycle states: proposed, accepted, in-progress, completed or failed — mirrored as stream entries, so any consumer can reconstruct task history from the stream itself. Replayability as a debugging feature.
+
+The key difference: typical A2A treats discovery and negotiation as separate from transport. Here they're unified — the stream itself is the source of truth.
+
+[Slide 39 — Integrating heartbeats and skills.]
+
+Now integrate heartbeats and skills into A2A. Reuse the Part 4 heartbeat stream as a capability-advertisement channel — the heartbeat payload includes which skills the agent currently has registered, so the orchestrator's routing decision uses one lookup instead of two.
+
+Routing logic: incoming task, match required skill, find agents advertising that skill, filter to agents with a live heartbeat, dispatch.
+
+And failure handling unique to this design: because tasks live on a replayable stream, a newly spun-up agent — or a recovering NanoClaw device — catches up on missed assignments just by re-reading the stream from its last acknowledged offset.
+
+[Slide 40 — Lab: kill, restart, resume. 10 minutes.]
+
+Lab. One: define the message envelope schema for the custom A2A protocol. Two: implement a two-agent exchange — Agent A proposes a task, Agent B accepts and reports progress via stream entries. Three: kill and restart Agent B mid-task — confirm it resumes from the stream rather than losing task state. Four: discuss — what would break if you swapped this for a standard synchronous A2A protocol? What would you lose, and what would you gain?
+
+# Combined Lab — End-to-End Channel-to-Skill Flow
+
+[Slide 41 — 20 minutes. Ties all seven parts together.]
+
+The combined lab — this ties everything together.
+
+The goal: a message — or voice input — arrives over a real channel; it's routed via the custom A2A protocol to a NanoClaw edge agent running Hermes; it invokes a registered skill; while the OpenClaw orchestrator only dispatches to agents with healthy heartbeats advertising the right capability.
+
+Step one: confirm your Part 6 channel-wired agent is the same NanoClaw plus Hermes agent from Part 3 — with the Part 5 skill, Part 4 heartbeat producer, and Part 7 envelope handling in place.
+
+Step two: send a channel message that requires the skill.
+
+Step three: the orchestrator uses Part 7 routing — skill match plus live heartbeat — to select and dispatch to the edge agent.
+
+Step four: simulate the edge agent going down mid-task. Confirm the orchestrator reroutes or queues — and that a recovering agent resumes from the stream.
+
+Step five: discuss — how does replayability change "what happens to an in-flight task"? And how does that surface to the user differently over messaging versus voice?
+
+# Wrap-Up
+
+[Slide 42 — The seven-layer story.]
+
+Let's recap the seven-layer story. OpenClaw — orchestration. Hermes — the model. NanoClaw — edge. Heartbeats — trust in state. Skills — trust in capability. Channels — trust in delivery. Custom A2A — trust in coordination.
+
+Open Q and A.
+
+Stretch topics for advanced learners: a combined health-plus-capability registry so orchestrator routing uses one signal instead of two — that was foreshadowed in 7.3. Streaming voice with barge-in as a follow-up deep dive. And benchmarking the custom A2A protocol against a standard synchronous A2A implementation.
+
+[Slide 43 — Materials checklist, for those replicating the setup.]
+
+# Closing
+
+[Slide 50 — Thank you slide. Point to the LangGraph appendix for advanced learners.]
+
+Thank you all. Take-home extensions: the four independent labs — heartbeat producer-consumer, skill critique-and-rewrite, channel wiring, and the A2A message envelope — plus a follow-up review session.
+
+And for those who want to go further: the appendix covers wiring A2A and Hermes together with LangGraph — including why the LangGraph checkpoint, not just the task ID, is what allows correct mid-graph resumption.
+
+See you at the review session.
+
+[END OF SCRIPT]
+</script>
+
+<script>
+(function () {
+  // localStorage can throw on some file:// / privacy contexts — fail soft
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+  };
+
+  const scroller = document.getElementById('scroller');
+  const content = document.getElementById('content');
+  const playBtn = document.getElementById('playBtn');
+  const speed = document.getElementById('speed');
+  const speedVal = document.getElementById('speedVal');
+  const fontSize = document.getElementById('fontSize');
+  const fontVal = document.getElementById('fontVal');
+  const progress = document.getElementById('progress');
+  const bar = document.getElementById('bar');
+  const editor = document.getElementById('editor');
+  const editArea = document.getElementById('editArea');
+
+  let playing = false;
+  let pxPerSec = Number(store.get('tp_speed') || 80);
+  let fSize = Number(store.get('tp_font') || 44);
+  let lastTs = null;
+
+  // ---------- script parsing ----------
+  function render(text) {
+    const frag = document.createDocumentFragment();
+    let slideNum = 1;
+    text.split(/\r?\n/).forEach(line => {
+      const t = line.trim();
+      const mSlide = t.match(/^\[Slide (\d+)/);
+      if (mSlide) slideNum = parseInt(mSlide[1], 10);
+      let el;
+      if (!t) {
+        el = document.createElement('div');
+        el.className = 'spacer';
+      } else if (t.startsWith('## ')) {
+        el = document.createElement('h3');
+        el.textContent = t.slice(3);
+      } else if (t.startsWith('# ')) {
+        el = document.createElement('h2');
+        el.textContent = t.slice(2);
+      } else if (t.startsWith('[') && t.endsWith(']')) {
+        el = document.createElement('p');
+        el.className = 'stage';
+        el.textContent = t;
+      } else {
+        el = document.createElement('p');
+        el.textContent = t;
+      }
+      el.dataset.slide = slideNum;
+      frag.appendChild(el);
+    });
+    content.innerHTML = '';
+    content.appendChild(frag);
+  }
+
+  // ---------- playback ----------
+  function setPlaying(v) {
+    playing = v;
+    playBtn.innerHTML = v ? '&#10074;&#10074; Pause' : '&#9654; Play';
+    lastTs = null;
+    if (v) requestAnimationFrame(tick);
+  }
+
+  function tick(ts) {
+    if (!playing) return;
+    if (lastTs !== null) {
+      const dt = (ts - lastTs) / 1000;
+      scroller.scrollTop += pxPerSec * dt;
+    }
+    lastTs = ts;
+    const max = scroller.scrollHeight - scroller.clientHeight;
+    if (max > 0 && scroller.scrollTop >= max) { setPlaying(false); return; }
+    requestAnimationFrame(tick);
+  }
+
+  function updateProgress() {
+    const max = scroller.scrollHeight - scroller.clientHeight;
+    progress.style.width = (max > 0 ? (scroller.scrollTop / max) * 100 : 0) + '%';
+  }
+  scroller.addEventListener('scroll', updateProgress, { passive: true });
+
+  // ---------- slide panel sync ----------
+  const TOTAL_SLIDES = 50;
+  const slideImg = document.getElementById('slideImg');
+  const nextImg = document.getElementById('nextImg');
+  const nextWrap = document.getElementById('nextWrap');
+  const slideCounter = document.getElementById('slideCounter');
+  let curSlide = 0;
+
+  function pad2(n) { return String(n).padStart(2, '0'); }
+
+  function slideAtReadingLine() {
+    const kids = content.children;
+    const y = scroller.scrollTop + scroller.clientHeight * 0.42;
+    let n = 1;
+    for (let i = 0; i < kids.length; i++) {
+      if (kids[i].offsetTop <= y) n = +(kids[i].dataset.slide || n);
+      else break;
+    }
+    return n;
+  }
+
+  function syncSlide() {
+    const n = slideAtReadingLine();
+    if (n === curSlide) return;
+    curSlide = n;
+    slideImg.src = 'teleprompter_slides/slide' + pad2(n) + '.png';
+    slideCounter.textContent = 'Slide ' + n + ' / ' + TOTAL_SLIDES;
+    if (n < TOTAL_SLIDES) {
+      nextImg.src = 'teleprompter_slides/slide' + pad2(n + 1) + '.png';
+      nextWrap.style.visibility = 'visible';
+    } else {
+      nextWrap.style.visibility = 'hidden';
+    }
+  }
+  scroller.addEventListener('scroll', syncSlide, { passive: true });
+
+  function gotoSlide(n) {
+    n = Math.max(1, Math.min(TOTAL_SLIDES, n));
+    const el = content.querySelector('[data-slide="' + n + '"]');
+    if (el) scroller.scrollTop = el.offsetTop - scroller.clientHeight * 0.42;
+  }
+
+  document.getElementById('prevSlide').addEventListener('click', () => gotoSlide(curSlide - 1));
+  document.getElementById('nextSlide').addEventListener('click', () => gotoSlide(curSlide + 1));
+  slideImg.addEventListener('click', () => gotoSlide(curSlide + 1));
+  document.getElementById('panelBtn').addEventListener('click', () => {
+    document.body.classList.toggle('no-panel');
+    store.set('tp_nopanel', document.body.classList.contains('no-panel') ? '1' : '');
+  });
+  if (store.get('tp_nopanel')) document.body.classList.add('no-panel');
+
+  // ---------- controls ----------
+  speed.value = pxPerSec; speedVal.textContent = pxPerSec;
+  fontSize.value = fSize; fontVal.textContent = fSize;
+  document.documentElement.style.setProperty('--font-size', fSize + 'px');
+
+  playBtn.addEventListener('click', () => setPlaying(!playing));
+  speed.addEventListener('input', () => {
+    pxPerSec = Number(speed.value);
+    speedVal.textContent = pxPerSec;
+    store.set('tp_speed', pxPerSec);
+  });
+  fontSize.addEventListener('input', () => {
+    fSize = Number(fontSize.value);
+    fontVal.textContent = fSize;
+    document.documentElement.style.setProperty('--font-size', fSize + 'px');
+    store.set('tp_font', fSize);
+  });
+  document.getElementById('flipX').addEventListener('click', () =>
+    content.classList.toggle('flip-x'));
+  document.getElementById('flipY').addEventListener('click', () =>
+    content.classList.toggle('flip-y'));
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    setPlaying(false);
+    scroller.scrollTop = 0;
+  });
+
+  // editor
+  document.getElementById('editBtn').addEventListener('click', () => {
+    editArea.value = currentScript;
+    editor.classList.add('open');
+    editArea.focus();
+  });
+  document.getElementById('cancelEdit').addEventListener('click', () =>
+    editor.classList.remove('open'));
+  document.getElementById('applyEdit').addEventListener('click', () => {
+    currentScript = editArea.value;
+    store.set('tp_script', currentScript);
+    render(currentScript);
+    scroller.scrollTop = 0;
+    curSlide = 0;
+    syncSlide();
+    editor.classList.remove('open');
+  });
+
+  // keyboard
+  document.addEventListener('keydown', e => {
+    if (editor.classList.contains('open')) {
+      if (e.key === 'Escape') editor.classList.remove('open');
+      return;
+    }
+    switch (e.code) {
+      case 'Space':
+        e.preventDefault(); setPlaying(!playing); break;
+      case 'ArrowUp':
+        speed.value = Math.min(220, Number(speed.value) + 10);
+        speed.dispatchEvent(new Event('input')); break;
+      case 'ArrowDown':
+        speed.value = Math.max(20, Number(speed.value) - 10);
+        speed.dispatchEvent(new Event('input')); break;
+      case 'ArrowRight':
+        fontSize.value = Math.min(96, Number(fontSize.value) + 2);
+        fontSize.dispatchEvent(new Event('input')); break;
+      case 'ArrowLeft':
+        fontSize.value = Math.max(24, Number(fontSize.value) - 2);
+        fontSize.dispatchEvent(new Event('input')); break;
+      case 'PageDown':
+        e.preventDefault(); gotoSlide(curSlide + 1); break;
+      case 'PageUp':
+        e.preventDefault(); gotoSlide(curSlide - 1); break;
+      case 'KeyF':
+        if (document.fullscreenElement) document.exitFullscreen();
+        else document.documentElement.requestFullscreen(); break;
+      case 'KeyH':
+        bar.classList.toggle('hidden'); break;
+      case 'Escape':
+        setPlaying(false); break;
+    }
+  });
+
+  // ---------- init ----------
+  let currentScript = store.get('tp_script') ||
+    document.getElementById('default-script').textContent;
+  render(currentScript);
+  updateProgress();
+  syncSlide();
+})();
+</script>
+</body>
+</html>
