@@ -1,0 +1,76 @@
+{
+  "hermes_agent": {
+    "id": "hermes_myshopper",
+    "display_name": "Hermes / MyShopper",
+    "represents": "customer",
+    "description": "Personal buying agent owned by the customer. It receives chat messages and negotiates with AgentMart through A2A.",
+    "channels": [
+      "telegram",
+      "whatsapp",
+      "webchat"
+    ],
+    "capabilities": [
+      "personal_buying_request",
+      "product_preference_extraction",
+      "customer_constraint_handoff",
+      "agentmart_a2a_negotiation"
+    ],
+    "model": {
+      "provider": "openrouter",
+      "base_url_env": "OPENROUTER_BASE_URL",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "model_env": "OPENROUTER_MODEL"
+    }
+  },
+  "a2a_connection": {
+    "protocol": "agentmart.a2a.v1",
+    "transport": "langgraph-workshop-in-process",
+    "task_endpoint": "agentmart://a2a/tasks",
+    "heartbeat_stream": "agentmart.a2a.heartbeats",
+    "capability_registry": "agentmart.a2a.capabilities",
+    "message_ttl_seconds": 900,
+    "requires_ack": true
+  },
+  "agentmart": {
+    "id": "agentmart",
+    "display_name": "AgentMart Agent Ecosystem",
+    "agents": [
+      {
+        "id": "shopping_agent",
+        "capabilities": [
+          "product_search",
+          "candidate_shortlist"
+        ]
+      },
+      {
+        "id": "pricing_agent",
+        "capabilities": [
+          "price_check",
+          "budget_fit",
+          "value_ranking"
+        ]
+      },
+      {
+        "id": "inventory_agent",
+        "capabilities": [
+          "stock_check",
+          "availability_risk"
+        ]
+      },
+      {
+        "id": "fulfillment_agent",
+        "capabilities": [
+          "delivery_options",
+          "pickup_options"
+        ]
+      },
+      {
+        "id": "order_agent",
+        "capabilities": [
+          "order_summary",
+          "checkout_next_step"
+        ]
+      }
+    ]
+  }
+}
