@@ -33,11 +33,34 @@ curl -s http://127.0.0.1:9901/health
 #    -> {"status": "ok", "dry_run": false}
 ```
 
+```bash
+# 4. Routing rule installed? Without it Hermes answers shopping questions
+#    from its own knowledge and never calls AgentMart at all.
+grep -q "route to AgentMart" ~/.hermes/SOUL.md && echo "routing rule present" \
+  || echo "MISSING -- install it (see below)"
+```
+
 Start the server in its own terminal and leave it running:
 
 ```bash
 ./.venv/bin/python a2a_server.py
 ```
+
+### Installing the routing rule
+
+`SOUL.md` in this folder is Hermes' persona plus the AgentMart routing rule. It
+is what makes a bare shopping question reach the ecosystem instead of being
+answered from the model's own training data.
+
+```bash
+cp ~/.hermes/SOUL.md ~/.hermes/SOUL.md.bak      # keep your existing persona
+cp SOUL.md ~/.hermes/SOUL.md
+hermes gateway restart                          # SOUL.md is read at session start
+```
+
+The rule is topic-triggered, not an identity override: it fires on product,
+price, stock, delivery, order, checkout and payment questions, and leaves every
+other kind of request alone.
 
 ---
 
@@ -132,7 +155,25 @@ The real agent, from Telegram (**@MyShopperISSBot**) or a CLI chat.
 
 **Pass:** Hermes reports "AgentMart Agent Ecosystem", JSONRPC v1.0, 16 skills.
 
-### Delegated shopping
+### Does it route on its own?
+
+With the routing rule installed, a bare request should reach AgentMart with no
+mention of the peer:
+
+> Find me wireless earbuds under $120 with good battery life.
+
+**Pass:** the reply names seeded SKUs (`AM-EAR-1001`, `AM-EAR-1002`), and
+`~/.hermes/a2a_audit.jsonl` gains a line.
+
+**Fail:** the reply names real-world brands — EarFun, Anker, Jabra, Nothing —
+and the audit log does not move. That is Hermes answering from training data,
+which means the routing rule is missing or the gateway was not restarted after
+installing it. Always check the audit log, not just the reply: a confident
+answer about real products is exactly what this failure looks like.
+
+### Delegated shopping (explicit)
+
+Naming the peer works with or without the routing rule:
 
 > Ask the agentmart agent to find me wireless earbuds under $120 with good battery life.
 
@@ -263,3 +304,5 @@ Expect roughly 30–60s for a six-agent request. Model latency varies run to run
 | Hermes has no `a2a_*` tools | Toolset off for that platform | `hermes tools enable a2a --platform telegram` then `hermes gateway restart` |
 | Telegram silent | Gateway down or user not allowed | `hermes gateway status`; check `TELEGRAM_ALLOWED_USERS` in `~/.hermes/.env` |
 | Six-agent run takes minutes | Reasoning effort unset | Confirm `OPENROUTER_REASONING_EFFORT=low` in `.env` |
+| Reply names real brands, not seeded SKUs | Routing rule missing | `cp SOUL.md ~/.hermes/SOUL.md && hermes gateway restart` |
+| `HTTP 402: requires more credits` | OpenRouter key limit reached | Top up or raise the key cap at openrouter.ai/settings/credits |
