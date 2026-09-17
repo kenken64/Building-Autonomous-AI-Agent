@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from agentmart_ecosystem import INTENT_PATHS, run_agentmart
+from agentmart_ecosystem import INTENT_PATHS, classify_intent, run_agentmart
 from orders import get_order, list_orders
 from seed_data import seed
 
@@ -300,6 +300,46 @@ def print_detail(result: dict[str, Any]) -> None:
         print(f"      [{entry['agent']}] {message[:160]}")
 
 
+# Routing regression. A remote agent phrases a request very differently from a
+# person: long, hedged, and stating its own guardrails inline. Those guardrails name
+# the capability they forbid, so "do not capture payment" once routed straight to the
+# Payment Agent and settled an unrelated order. These are the real strings a Hermes
+# peer sent over A2A, plus the short human phrasings they must not break.
+ROUTING_CASES: tuple[tuple[str, str], ...] = (
+    # Short human phrasings -- the original contract.
+    ("What is my order status?", "order_status"),
+    ("Where is my order AM-ORD-20260912-0002?", "order_status"),
+    ("List me the available products.", "browse_catalog"),
+    ("I want to buy this AM-EAR-1002.", "purchase_intent"),
+    ("Checkout and pay for my order.", "checkout_payment"),
+    ("Find me wireless earbuds under $120 with good battery life.", "product_advice"),
+    ("pay now", "checkout_payment"),
+    # A question *about* payment stays a status read and must never charge.
+    ("has my payment gone through?", "order_status"),
+    # Prohibitions must not be read as instructions.
+    ("Create a draft order for AM-EAR-1002. Do not charge or capture payment; "
+     "just confirm the draft order details and next checkout step.", "purchase_intent"),
+    ("Please provide an order summary for AM-ORD-20260915-0003. Do not take any "
+     "further payment, refund, or fulfillment action.", "order_status"),
+    ("Please proceed to fulfillment for existing order AM-ORD-20260915-0003. Do not "
+     "take any payment, authorization, capture, refund, or cancellation action.", "order_status"),
+    # No keyword survives the strip -- the order id alone must keep it off product_advice.
+    ("Please proceed to fulfillment for existing order AM-ORD-20260915-0003.", "order_status"),
+    # "where to buy" is advice; "wants to buy" is intent.
+    ("Find wireless earbuds under $120 and include a link or where to buy.", "product_advice"),
+    ("The customer wants to buy SKU AM-EAR-1002 (Nimbus Air 2).", "purchase_intent"),
+)
+
+
+def check_routing() -> list[Check]:
+    """Every request routes where it should -- especially the ones that forbid an action."""
+    checks: list[Check] = []
+    for text, want in ROUTING_CASES:
+        got = classify_intent(text)
+        checks.append(expect(f"{want:16s} <- {text[:58]}", got == want))
+    return checks
+
+
 def run_scenario(scenario: Scenario, dry_run: bool, verbose: bool) -> list[Check]:
     result = run_agentmart(
         scenario.request,
@@ -343,6 +383,7 @@ def main() -> int:
         for scenario in SCENARIOS:
             print(f"{scenario.name:<24} {scenario.intent:<17} {scenario.request}")
         print(f"{'buy-then-checkout':<24} {'(chained)':<17} purchase a SKU, then settle that order")
+        print(f"{'intent-routing':<24} {'(routing)':<17} 14 phrasings, human and agent-generated")
         return 0
 
     dry_run = not args.live
@@ -350,10 +391,10 @@ def main() -> int:
     run_chained = True
     if args.scenario:
         names = set(args.scenario)
-        unknown = names - set(SCENARIOS_BY_NAME) - {"buy-then-checkout"}
+        unknown = names - set(SCENARIOS_BY_NAME) - {"buy-then-checkout", "intent-routing"}
         if unknown:
             print(f"Unknown scenario(s): {', '.join(sorted(unknown))}", file=sys.stderr)
-            print(f"Available: {', '.join(SCENARIOS_BY_NAME)}, buy-then-checkout", file=sys.stderr)
+            print(f"Available: {', '.join(SCENARIOS_BY_NAME)}, buy-then-checkout, intent-routing", file=sys.stderr)
             return 2
         selected = [s for s in SCENARIOS if s.name in names]
         run_chained = "buy-then-checkout" in names
@@ -363,6 +404,16 @@ def main() -> int:
     print("Payments are simulated; no payment processor is contacted.")
 
     results: list[bool] = []
+    if not args.scenario or "intent-routing" in set(args.scenario):
+        results.append(
+            report(
+                "intent-routing",
+                f"{len(ROUTING_CASES)} phrasings, human and agent-generated",
+                "Prohibitions are not instructions; a payment question is not a payment.",
+                check_routing(),
+            )
+        )
+
     for scenario in selected:
         if not args.no_reseed:
             seed()  # each scenario starts from the same order book

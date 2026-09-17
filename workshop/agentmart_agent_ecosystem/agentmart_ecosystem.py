@@ -201,10 +201,17 @@ ORDER_ID_PATTERN = re.compile(r"\bAM-ORD-[\w-]+\b", re.IGNORECASE)
 # ("has my payment gone through?") must stay a status lookup and never charge.
 INTENT_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
+        # 0. An explicit request to *draft* an order outranks every payment word
+        # that may trail it ("...just confirm the draft and the next checkout step").
+        "purchase_intent",
+        re.compile(r"draft\s+order|create\s+(?:a\s+)?draft", re.IGNORECASE),
+    ),
+    (
         # 1. Unambiguous checkout imperatives.
         "checkout_payment",
         re.compile(
-            r"check\s?out\b|\bpay\s+now\b|place\s+the\s+order|settle\s+(up|the\s+bill)",
+            r"check\s?out\b(?!\s*(?:step|steps|process|flow|page|link|option|details))|"
+            r"\bpay\s+now\b|place\s+the\s+order|settle\s+(up|the\s+bill)",
             re.IGNORECASE,
         ),
     ),
@@ -212,7 +219,8 @@ INTENT_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         # 2. Status questions, including questions *about* a payment.
         "order_status",
         re.compile(
-            r"order\s+status|status\s+of\s+(my|the|order)|where\s+is\s+my|"
+            r"order\s+status|order\s+summary|order[_\s]status[_\s]lookup|"
+            r"status\s+of\s+(my|the|order)|where\s+is\s+my|"
             r"track(ing)?\b|my\s+orders?\b|delivery\s+status|has\s+it\s+shipped|"
             r"payment\s+.*(gone\s+through|received|cleared|succeed)",
             re.IGNORECASE,
@@ -225,7 +233,12 @@ INTENT_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "purchase_intent",
-        re.compile(r"\bbuy\b|purchase|add\s+to\s+(the\s+)?cart|i.?ll\s+take|take\s+(it|this)|order\s+(this|the)", re.IGNORECASE),
+        re.compile(
+            r"(?:want|wants|wish|would\s+like|going)\s+to\s+buy|i.?ll\s+buy|"
+            r"\bbuy\s+(?:this|it|the|sku)\b|purchase\s+(?:this|it|the|sku)|"
+            r"add\s+to\s+(the\s+)?cart|i.?ll\s+take|take\s+(it|this)|order\s+(this|the)",
+            re.IGNORECASE,
+        ),
     ),
     (
         "browse_catalog",
@@ -238,6 +251,21 @@ INTENT_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+# A remote agent states its guardrails in the request itself -- "do not charge or
+# capture payment", "without taking any refund action". Those clauses name the very
+# capability they are forbidding, so matching them verbatim routes a prohibition to
+# the Payment Agent. Drop each one up to its clause boundary before any rule runs.
+PROHIBITION_CLAUSE = re.compile(
+    r"\b(?:do\s+not|do\s?n['\u2019]t|does\s+not|never|without|avoid|no\s+need\s+to)\b[^.;:\n]*",
+    re.IGNORECASE,
+)
+
+
+def strip_prohibitions(text: str) -> str:
+    """Remove negated clauses so a forbidden action cannot be read as a requested one."""
+    return PROHIBITION_CLAUSE.sub(" ", text)
+
+
 def classify_intent(customer_request: str) -> Intent:
     """Deterministic intent routing.
 
@@ -245,9 +273,15 @@ def classify_intent(customer_request: str) -> Intent:
     `test_scenarios.py` mean something: the agents are the model-driven part,
     the routing is not.
     """
+    customer_request = strip_prohibitions(customer_request)
     for intent, pattern in INTENT_RULES:
         if pattern.search(customer_request):
             return intent  # type: ignore[return-value]
+    # A request naming an existing order is about that order, whatever else it says.
+    # Falling through to product_advice here would wake Shopping and Pricing to answer
+    # a question about an order already in the book.
+    if extract_order_id(customer_request):
+        return "order_status"
     return "product_advice"
 
 

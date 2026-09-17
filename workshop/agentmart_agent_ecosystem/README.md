@@ -311,18 +311,49 @@ never paper over a discrepancy with something more plausible.
 or fulfillment agent is woken — and returns payment state, simulated auth ref,
 locker pickup, ETA and line items straight from the order book.
 
-### Known issue in these captures
+### What capture 1 caught: prohibitions read as instructions
 
 The purchase in capture 1 settled the customer's **pre-existing** order
 `AM-ORD-20260915-0003` (power bank + travel hub, $93.00) instead of drafting a new
-one for `AM-EAR-1002`. The A2A audit log shows Hermes asking correctly — *"create a
-draft order for quantity 1"* — and `classify_intent` routes that text to
-`purchase_intent`, so the misrouting happens further down, inside the Order Agent's
-handling of a customer who already has an unpaid order in the book.
+one for `AM-EAR-1002`. Captures 2 and 3 are the system noticing its own mistake.
 
-Captures 2 and 3 are the system detecting its own error, which is worth keeping.
-Not yet root-caused. Reset the order book with `python seed_data.py --reset` after
-reproducing.
+The cause was in `classify_intent`, and it is worth understanding because it is a
+general hazard when an LLM front-end drives a rule-based router.
+
+Hermes asked correctly. What it sent was:
+
+> The customer wants to buy SKU AM-EAR-1002 (Nimbus Air 2). Please create a draft
+> order for quantity 1 ... **Do not charge or capture payment**; just confirm the
+> draft order details and next **checkout** step.
+
+Both guardrails — the phrase forbidding payment, and the words "checkout step" —
+matched the `checkout_payment` rules. The router read a *prohibition* as a
+*command*, routed to the Payment Agent, found no order id, fell back to
+`find_payable_order()`, and settled whatever unpaid order the customer already had.
+
+A remote agent states its safety constraints inline, and those constraints name the
+exact capability they are forbidding. The lab's own test phrasings are short and
+human ("I want to buy this AM-EAR-1002."), so nothing caught it. Across the real
+session, **four of seven** requests routed to `checkout_payment`, including three
+that said "Do not take any payment, refund, or fulfillment action."
+
+Fixed in four parts:
+
+1. `strip_prohibitions()` removes negated clauses (`do not ...`, `without ...`,
+   `never ...`) up to their clause boundary before any rule runs.
+2. An explicit `draft order` request outranks every payment word trailing it.
+3. `checkout` followed by `step`/`process`/`flow`/`page` is a noun phrase, not an
+   instruction to charge; `order summary` and `order_status_lookup` are status reads.
+4. `buy` must be intentional — "wants to buy" is purchase intent, "where to buy" is
+   advice. And a request naming an existing order id can never fall through to
+   `product_advice`.
+
+`test_scenarios.py` now asserts all 14 phrasings, human and agent-generated, so a
+prohibition can never again be read as an instruction:
+
+```bash
+python test_scenarios.py -s intent-routing   # or just: python test_scenarios.py
+```
 
 ## Seeded Order Book
 

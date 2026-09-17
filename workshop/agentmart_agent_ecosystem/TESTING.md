@@ -75,11 +75,15 @@ No network, no Hermes. Proves routing, the order book and the agent prompts.
 # One scenario, with the A2A hops and agent replies printed
 ./.venv/bin/python test_scenarios.py -s product-advice --verbose
 
+# Routing only: 14 phrasings, human and agent-generated. Catches the class of bug
+# where a request saying "do not capture payment" routes to the Payment Agent.
+./.venv/bin/python test_scenarios.py -s intent-routing
+
 # The same suite against the real model
 ./.venv/bin/python test_scenarios.py --live
 ```
 
-**Pass:** `8/8 scenarios passed`.
+**Pass:** `9/9 scenarios passed`.
 
 ### Per-intent prompts
 
