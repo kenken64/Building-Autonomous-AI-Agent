@@ -7,6 +7,12 @@
 <style>
   :root {
     --font-size: 44px;
+    --line-height: 1.45;
+    --stage-size: .62em;
+    --h3-size: .85em;
+    /* Latin-first stack; CJK faces appended so mixed text never falls back to a serif */
+    --font-stack: "Segoe UI", Arial, "PingFang SC", "Hiragino Sans GB",
+      "Microsoft YaHei", "Noto Sans SC", sans-serif;
     --bg: #0b0e14;
     --fg: #f5f7fa;
     --accent: #f99d1f;
@@ -16,7 +22,20 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; background: var(--bg); color: var(--fg);
-    font-family: "Segoe UI", Arial, sans-serif; overflow: hidden; }
+    font-family: var(--font-stack); overflow: hidden; }
+
+  /* Simplified Chinese: CJK-first stack, looser leading, softer weight —
+     dense Han glyphs need more air than Latin at teleprompter sizes. */
+  html[lang="zh-Hans"] {
+    --font-stack: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+      "Noto Sans SC", "Source Han Sans SC", "WenQuanYi Micro Hei",
+      "Segoe UI", Arial, sans-serif;
+    --line-height: 1.7;
+    --stage-size: .66em;
+    --h3-size: .9em;
+  }
+  html[lang="zh-Hans"] #content { font-weight: 500; letter-spacing: .01em;
+    line-break: strict; word-break: normal; overflow-wrap: break-word; }
 
   #progress { position: fixed; top: 0; left: 0; height: 4px; width: 0%;
     background: var(--accent); z-index: 30; transition: width .15s linear; }
@@ -51,7 +70,7 @@
   #nextWrap span { color: var(--dim); font-size: 12px; white-space: nowrap; }
   #nextImg { width: 130px; border-radius: 4px; border: 1px solid #262e3f; opacity: .75; }
   #content { max-width: 1100px; margin: 0 auto; padding: 36vh 48px 70vh;
-    font-size: var(--font-size); line-height: 1.45; font-weight: 600;
+    font-size: var(--font-size); line-height: var(--line-height); font-weight: 600;
     text-align: left; }
   #content.flip-x { transform: scaleX(-1); }
   #content.flip-y { transform: scaleY(-1); }
@@ -59,10 +78,10 @@
 
   #content h2 { color: var(--accent); font-size: 1.15em; margin: 1.6em 0 .5em;
     border-bottom: 2px solid rgba(249,157,31,.4); padding-bottom: .2em; }
-  #content h3 { color: #7db3f5; font-size: .85em; margin: 1.4em 0 .35em; }
+  #content h3 { color: #7db3f5; font-size: var(--h3-size); margin: 1.4em 0 .35em; }
   #content p { margin: .55em 0; }
   #content p.stage { color: var(--dim); font-style: italic; font-weight: 400;
-    font-size: .62em; letter-spacing: .02em; }
+    font-size: var(--stage-size); letter-spacing: .02em; }
   #content .spacer { height: .8em; }
 
   /* control bar */
@@ -76,7 +95,9 @@
     border-radius: 6px; padding: 7px 14px; font-size: 13px; cursor: pointer; }
   #bar button:hover { background: #2e3950; border-color: var(--accent); }
   #bar button.primary { background: var(--accent); border-color: var(--accent);
-    color: #1a1200; font-weight: 700; min-width: 88px; }
+    color: #1a1200; font-weight: 700; min-width: 96px; }
+  #bar button.lang { border-color: var(--blue); color: #a9cbff; min-width: 104px; }
+  #bar button.lang:hover { background: #1b2740; border-color: #7db3f5; }
   #bar label { display: flex; align-items: center; gap: 8px; color: var(--dim);
     white-space: nowrap; }
   #bar input[type="range"] { width: 110px; accent-color: var(--accent); }
@@ -117,16 +138,18 @@
   <img id="slideImg" src="teleprompter_slides/slide01.png" alt="Current slide"
        title="Click to advance to next slide">
   <div id="nextWrap">
-    <span>NEXT &#9656;</span>
+    <span id="nextLbl">NEXT &#9656;</span>
     <img id="nextImg" src="teleprompter_slides/slide02.png" alt="Next slide">
   </div>
 </div>
 
 <div id="bar">
   <button id="playBtn" class="primary">&#9654; Play</button>
-  <label>Speed <input id="speed" type="range" min="20" max="220" value="80">
+  <label><span id="speedLbl">Speed</span>
+    <input id="speed" type="range" min="20" max="220" value="80">
     <span class="val" id="speedVal">80</span></label>
-  <label>Font <input id="fontSize" type="range" min="24" max="96" value="44">
+  <label><span id="fontLbl">Font</span>
+    <input id="fontSize" type="range" min="24" max="96" value="44">
     <span class="val" id="fontVal">44</span></label>
   <button id="flipX" title="Mirror horizontally (for beam-splitter rig)">&#8646; Flip H</button>
   <button id="flipY" title="Flip vertically">&#8693; Flip V</button>
@@ -135,24 +158,23 @@
   <button id="resetBtn" title="Back to top">&#10548; Top</button>
   <button id="panelBtn" title="Show/hide slide panel">&#9635; Panel</button>
   <button id="editBtn" title="Edit script">&#9998; Script</button>
+  <button id="langBtn" class="lang" title="Switch script and interface to Chinese">&#127760; 中文</button>
   <div class="spacer-flex"></div>
-  <span class="keys"><kbd>Space</kbd> play &nbsp;<kbd>&uarr;</kbd><kbd>&darr;</kbd> speed
-    &nbsp;<kbd>&larr;</kbd><kbd>&rarr;</kbd> font &nbsp;<kbd>PgUp</kbd><kbd>PgDn</kbd> slide
-    &nbsp;<kbd>F</kbd> fullscreen &nbsp;<kbd>H</kbd>ide bar</span>
+  <span class="keys" id="keysHint"></span>
 </div>
 
 <div id="editor">
-  <h1>Teleprompter Script</h1>
-  <div class="hint">Formatting: <b># Section</b> header &nbsp;·&nbsp; <b>## Sub-section</b> &nbsp;·&nbsp;
-    <b>[stage direction]</b> dim italic &nbsp;·&nbsp; blank line = pause beat</div>
+  <h1 id="editorTitle">Teleprompter Script</h1>
+  <div class="hint" id="editorHint"></div>
   <textarea id="editArea" spellcheck="false"></textarea>
   <div class="row">
+    <button id="loadDefault">Load default</button>
     <button id="cancelEdit">Cancel</button>
     <button id="applyEdit" class="apply">Apply &amp; Close</button>
   </div>
 </div>
 
-<script id="default-script" type="text/plain">
+<script id="script-en" type="text/plain">
 # Building Autonomous AI Agents — Day 3 Lecture Script
 ## OpenClaw · Hermes · NanoClaw
 
@@ -527,6 +549,381 @@ See you at the review session.
 [END OF SCRIPT]
 </script>
 
+<script id="script-zh" type="text/plain">
+# 构建自主式 AI 智能体 —— 第三天讲稿
+## OpenClaw · Hermes · NanoClaw
+
+[幻灯片 1 —— 标题页。学员陆续入座时致欢迎词。]
+
+各位早上好，欢迎来到《构建自主式 AI 智能体》第三天的课程。
+
+今天的内容围绕三项技术展开：负责编排的 OpenClaw、作为模型层的 Hermes，以及面向边缘部署的 NanoClaw。
+
+在这个过程中，我们还会讨论四个贯穿始终的关键议题：心跳机制、技能编写、通道集成，以及一套自研的智能体间通信协议，也就是 A2A。
+
+# 课程脉络
+
+[幻灯片 2 —— 三天课程的递进关系图。]
+
+先快速回顾一下进度。第一天，你构建了一个智能体；第二天，你构建了一支智能体团队；而今天，第三天，我们要构建的是一个智能体生态。
+
+具体来说，就是构建 MyShopper —— 一个归客户所有的个人采购智能体。与第二天的智能体不同，MyShopper 代表的是客户，而不是 AgentMart。
+
+客户通过 Telegram、WhatsApp 或网页聊天与 MyShopper 对话；MyShopper 再通过 A2A 协议，与 AgentMart 生态中的导购、定价、库存、履约和订单等智能体协同工作。
+
+# 今日议程
+
+[幻灯片 3 —— 快速浏览议程；点出三次休息和最后的综合实验。]
+
+这是今天的安排。上午的第一到第三部分对应三个技术层；随后我们深入讲解心跳机制与技能编写，接着是通道集成，然后是 A2A 协议；最后以一个二十分钟的综合实验收尾，把所有内容串联起来。
+
+如果你打算把课程拆成三场来讲：A 场覆盖第一到第三部分，B 场覆盖第四、第五部分，C 场覆盖第六、第七部分以及最后的综合实验。
+
+# 学习目标
+
+[幻灯片 4 —— 简要朗读这六项目标。]
+
+学完今天的课程，你将能够：讲清楚三个技术层如何协同；设计心跳机制，包括为网络不稳定环境下的边缘智能体设计心跳；编写出能可靠触发正确调用的技能描述；把智能体接入消息与语音通道；基于 Redis Streams 与 MCP 设计自定义 A2A 协议；并打通从用户消息到技能调用再返回的完整链路。
+
+# 技术栈全景
+
+[幻灯片 5 —— 依次指向每一层，再指向四个关键议题。]
+
+这是贯穿今天的心智模型。OpenClaw 是编排层 —— 基于 Redis Streams 与 MCP 的多智能体骨干。Hermes 是模型层 —— 一个开放权重的函数调用模型。NanoClaw 是边缘层 —— 面向树莓派级硬件的端侧部署。
+
+而让这套系统在生产环境中值得信赖的，是四个关键议题：心跳机制带来对状态的信任，技能编写带来对能力的信任，通道集成带来对送达的信任，自研 A2A 协议带来对协同的信任。
+
+到今天结束时，你会亲手搭出一个小型系统，把这里的每一块都用上。
+
+# 三层对比
+
+[幻灯片 6 —— OpenClaw、Hermes 与 NanoClaw 的对比表。]
+
+我们把三层并排放在一起看。
+
+OpenClaw 是编排层 —— 基于 Redis Streams 与 MCP 的多智能体骨干。它的价值在于：智能体之间的消息传递是持久化、可回放、且支持多消费者的。需要注意的是：流拓扑的设计，以及 Redis 带来的运维开销。
+
+Hermes 是模型层 —— 一个开放权重的函数调用模型。它的价值在于成本、延迟和免于厂商锁定，并且把结构化工具调用作为一等输出。需要注意的是：较小的开源模型在质量上仍落后于前沿模型。
+
+NanoClaw 是边缘层 —— 在树莓派级硬件上运行的精简版 OpenClaw 加 Hermes 运行时。它的价值在于隐私、离线可用和零调用成本 —— 数据始终留在设备上。需要注意的是：内存紧张、必须量化，以及端侧推理速度较慢。
+
+一套技术栈，三个层次。今天余下的时间，就是让它们真正可信 —— 靠心跳、技能、通道和 A2A。
+
+# 第一部分 —— OpenClaw：编排层
+
+[幻灯片 7 —— 章节分隔页。45 分钟。]
+
+第一部分，OpenClaw —— 编排层。
+
+[幻灯片 8 —— 现场演示：两个智能体通过 Redis Streams 通信。]
+
+OpenClaw 的骨干是 Redis Streams 加 MCP。Redis Streams 为智能体之间提供持久化、可回放、支持多消费者的消息传递；MCP 则统一了智能体暴露和调用工具的方式。
+
+请看演示：智能体 A 发布一条消息，这条消息随即出现在智能体 B 的收件流中 —— 由 B 独立消费，按自己的节奏处理。
+
+这一层还有两个生态插件。ClawHub —— 技能市场，可复用的技能在这里发布和被发现。以及 MoltGuard —— 护栏代理，它位于请求链路之中，负责策略与安全检查。
+
+# 第二部分 —— Hermes：模型层
+
+[幻灯片 9 —— 章节分隔页。45 分钟。]
+
+第二部分，Hermes —— 模型层。
+
+[幻灯片 10 —— 两栏对比：为什么选开放权重 / 与 Claude、GPT 的差异。]
+
+为什么开放权重的函数调用模型很重要？有四个原因。成本 —— 在智能体的调用规模下，没有按 token 计费的 API 账单。延迟 —— 模型就部署在智能体旁边，甚至直接跑在智能体上。免于厂商锁定 —— 可自托管，也可移植到边缘硬件。还有，函数调用是内建能力 —— 结构化工具调用是一等输出，而不是靠提示词硬凑出来的。
+
+与 Claude 或 GPT 的工具调用相比，关键要确认的是输出格式：Hermes 是否输出 OpenAI 风格的 tool_calls？这决定了你的智能体框架需不需要加一层转换适配。
+
+在动手环节，我们会让 Hermes 通过一个 OpenClaw 智能体发出结构化的工具调用。
+
+# Hermes 核心能力：自动化引擎
+
+[幻灯片 11 —— Hermes 核心能力：定时任务、看板、子智能体委派。]
+
+我们再深入看看 Hermes 的自动化引擎。第一，自然语言定时任务 —— 一句“每个工作日早上九点，汇总我的收件箱并发到 Slack”就够了。智能体还可以自行安排唤醒时间，而脚本模式运行时完全不消耗 LLM token。
+
+第二，看板协同 —— 给七个智能体一块共享看板，它们就会开始自我管理。看板会读取每个配置档中的 SOUL.md 来获取名称与角色，任务在待办、进行中、已完成之间流转 —— 全程不需要你来回传话。
+
+第三，子智能体委派 —— 你只和一个主控智能体对话，由它把任务分派给各个专家智能体。官方提供了一个安装器，可以把全新安装变成一支九种角色的开发团队。权限边界靠工具集限制来强制执行，而不只是靠系统提示词 —— 编排者还会把交付结果评定为通过、返工或失败。
+
+此外还有一系列配套能力：自我进化的技能 —— 智能体会自己编写技能文件；三层记忆，各配置档相互独立；以及安全控制：审批闸门、回滚，以及中途干预纠偏。
+
+# Hermes 的真实落地：自动化案例
+
+[幻灯片 12 —— 来自 Hermes 官方文档的社区自动化案例。]
+
+而且这些已经跑在生产环境里，不是纸上谈兵。有人跑了 28 个定时任务和 30 多个技能 —— 其中包括一个凌晨三点的“做梦”任务，它会通读当天的对话，写好第二天所需的上下文。
+
+Gumroad 把大部分业务都交给了一台专用 Mac 上的智能体 —— 定时任务负责查看客服工单、关注 X 上的提及、更新财务文档 —— 而每一次失误都会变成一条带日期的策略规则，此后智能体必须先读过它。
+
+二十个定时“信号”任务写入一份每日台账，再由一个智能体化的分诊任务挑出真正重要的内容。
+
+团队协同方面：七个智能体拿到一块共享看板后，开始自我管理。Hermes Swarm 让智能体团队 7×24 小时运转 —— 点对点通信、分派工作、自行安排唤醒。而 Nous Research 自己每天并行运行 12 个 Hermes 实例来开发 Hermes。
+
+参考资料：hermes-agent.nousresearch.com/docs/user-stories —— 收录了 326 个案例，分为 15 个类别。
+
+# Hermes 进阶细节：LSP、Curator、SOUL.md 与媒体生成
+
+[幻灯片 13 —— Hermes 进阶细节：LSP、Curator、SOUL.md、媒体生成。]
+
+还有几项 Hermes 核心能力值得了解。先说 LSP —— Hermes 会以后台子进程的形式运行大约二十个真实的语言服务器：pyright、typescript-language-server、rust-analyzer、gopls、clangd 等等。每次写入或打补丁之后，智能体只会看到这次改动新引入的诊断信息：类型错误、未定义的名称、缺失的导入。这与一流编码智能体所用的架构一致，而且是自带、开箱即用的。
+
+Curator —— 面向智能体自建技能的后台维护机制。它会跟踪使用情况，把长期未用的技能从活跃移到陈旧、再归档；可以通过可选的 LLM 流程合并高度相似的技能；会生成可回滚的快照；你也可以把某些技能固定住加以保护。它的作用，是防止自我进化的循环把技能库污染掉。
+
+个性设定 —— SOUL.md 是系统提示词的第一个槽位，定义智能体的身份。它只从 Hermes 主目录加载，因此行为是可预期的。斜杠命令的人格预设 —— 教师、技术、创意、海盗 —— 只是会话级的覆盖层。一个简单的判断标准：SOUL.md 描述智能体是谁，AGENTS.md 描述项目怎么运作。
+
+媒体生成方面：图像生成通过 FAL.ai 内建支持 —— 共十一个模型，包括 FLUX 2、GPT-Image、Ideogram V3 和 Recraft V4。视频生成目前通过技能和集成来实现 —— 例如 Higgsfield 的 UGC 广告工作室 —— 与 MCP 工具是同一套可扩展思路。
+
+# Hermes 的持久化记忆
+
+[幻灯片 14 —— 持久化记忆：MEMORY.md 与 USER.md。]
+
+Hermes 拥有有界、经过筛选、可跨会话保留的记忆。它由两个文件构成：MEMORY.md —— 智能体记录的环境信息、团队约定和经验教训，上限 2,200 个字符；USER.md —— 你的个人档案，包括偏好和沟通风格，上限约 1,375 个字符。两者都会在会话开始时以冻结快照的形式注入系统提示词 —— 这样可以保住前缀缓存 —— 而记忆工具的新增、替换和删除操作会立即写入磁盘，在下一次会话生效。
+
+它的边界是刻意设计的：记忆写满时，智能体必须在同一轮对话中先合并已有条目，才能再写入新的；重复条目会被拒绝；并且每一条都会扫描注入与数据外泄特征，因为它们最终会进入系统提示词。
+
+除这两个文件之外，session_search 提供对所有历史会话的 FTS5 全文检索 —— 完全免费，不需要调用 LLM。所以：记忆用于存放应当始终在上下文里的关键事实；会话检索则用来回答“我们上周是不是聊过这个？”
+
+还有知情同意这一面：开启 write_approval 之后，每一次保存都会先暂存待你审核 —— 这正是对“智能体把关于我的错误假设存下来了”这个顾虑的回答。
+
+# Honcho 记忆：辩证式用户建模
+
+[幻灯片 15 —— Honcho：辩证式用户建模。]
+
+如果两个文本文件已经不够用，可以考虑 Honcho —— 一个 AI 原生的记忆后端，也是八个记忆插件之一。它不是键值存储，而是在对话结束之后对其进行推理 —— 官方称之为辩证推理 —— 并持续构建一个关于用户的模型：偏好、目标和行为模式。
+
+注入提示词的有两层内容：基础上下文 —— 会话摘要、用户画像和对等方名片；以及辩证补充 —— 当下真正重要的信息。辩证推理还可以多轮运行：评估、自审、校正。
+
+在多智能体场景下有一个亮点：按对等方隔离。你的编码助手和你的个人助理会各自维护一份对你的画像 —— 互不串扰。
+
+而 Honcho 只是八个提供方之一 —— 还有 Mem0、Hindsight、Supermemory 等等 —— 它们都与内建记忆并行运行，而不是取代它。安装只需一条命令：hermes memory setup。
+
+# Hermes 插件：一切皆可扩展
+
+[幻灯片 16 —— 插件系统。]
+
+最后是插件 —— 一切扩展的入口。往 ~/.hermes/plugins 放一个目录，里面带上 plugin.yaml 和一个 register 函数，你的工具就会和内建工具并列出现 —— 不需要改动核心代码。
+
+可扩展的面很广：工具、27 个生命周期钩子（其中包括看板事件）、斜杠命令、CLI 命令、随插件分发的技能、网关平台、图像与视频生成后端、记忆提供方、上下文引擎、模型提供方、审批通道，以及 MCP 调用。
+
+插件分四类：通用插件 —— 可以任意组合启用；记忆提供方和上下文引擎 —— 各自只能启用一个；模型提供方 —— 只能选一个。
+
+安全上也毫不含糊：第三方插件默认不启用 —— 不加入允许清单就不会运行。安装按 SHA 锁定，官方维护精选目录，每次安装都会做静态安全扫描 —— 判定为危险的直接拦截 —— 声明的权限需要明确授权，版本更新后还要重新授权。这正是我们在第五部分会看到的 OWASP 安全姿态。
+
+# 第三部分 —— NanoClaw：边缘层
+
+[幻灯片 17 —— 章节分隔页。45 分钟。]
+
+第三部分，NanoClaw —— 边缘层。
+
+[幻灯片 18 —— 左侧是约束条件，右侧是边缘与云端的对比。]
+
+树莓派级硬件带来的是实打实的约束。内存紧张，这就迫使我们只能用小模型。量化 —— Hermes 要以量化版本运行才塞得进去。还有延迟 —— 端侧推理是拿速度换取独立性。
+
+请看演示：我们把一个精简版的 OpenClaw 加 Hermes 智能体部署到 NanoClaw 上。
+
+与云端托管的智能体相比，权衡是这样的：边缘侧胜在隐私、离线可用、零调用成本，以及数据不出设备；云端则胜在模型质量、吞吐量，以及无需管理硬件。
+
+请记住这个权衡 —— 它会在第四部分再次出现，因为边缘网络的不稳定会打破对心跳机制的天真假设；也会在第六部分出现，因为语音的延迟预算会逼着你在云端与本地之间做出选择。
+
+# 第四部分 —— 心跳机制
+
+[幻灯片 19 —— 章节分隔页。60 分钟。深度专题。]
+
+第四部分，心跳机制。这是我们的第一个深度专题。
+
+[幻灯片 20 —— 三种信号。]
+
+有三种信号经常被混为一谈。存活性：进程到底还在不在运行？就绪性：它当前能不能接受新任务？健康度：它的性能和错误率是否还在可接受的范围内？
+
+一个进程可能活着但没就绪，也可能已就绪但不健康。你的故障检测设计必须明确说清楚：它跟踪的到底是哪一种信号。
+
+[幻灯片 21 —— 推送与拉取。]
+
+推送与拉取。在推送模型里，智能体按固定间隔主动向编排者上报。这样编排者的负载更低 —— 但前提是智能体本身行为规范。一个已经卡死却还在持续上报的智能体，看上去仍然是活的。
+
+在拉取模型里，由编排者轮询每一个智能体。故障检测更简单、也更可信 —— 但随着智能体数量增长，扩展性会更差。
+
+[幻灯片 22 —— 间隔与 TTL。]
+
+间隔与 TTL 的设计。太频繁，流里全是噪声，白白消耗 Redis 吞吐；太稀疏，故障检测就慢 —— 任务会被派给已经死掉的智能体。
+
+经验法则：TTL 大约取心跳间隔的二到三倍，再根据任务重新分配的代价来调整。重分配代价低？就把 TTL 调短，检测更快。重分配代价高？就把 TTL 调长，容忍偶发的漏报。
+
+[幻灯片 23 —— OpenClaw 的具体实现。]
+
+具体到 OpenClaw：传输方式有两种，一是为每个智能体设一条专用的 Redis Stream，二是为每个智能体设一个带 TTL 的键，不按时刷新就自动过期。
+
+在编排者一侧，由一个检测循环识别出已死亡或不可达的智能体，并触发其任务的重新分配。
+
+还要当心状态反复抖动的智能体 —— 你需要做去抖处理：要求连续 N 次漏报才判定为下线。单次漏报就判死会引发震荡：智能体在上线与下线之间来回跳变，任务被反复无谓地重新分配。
+
+[幻灯片 24 —— 边缘场景的特殊情况。]
+
+一个特殊情况 —— 而且字面意义上就发生在“边缘”。树莓派级硬件上时断时续的网络，会打破所有天真的假设。
+
+重连要采用指数退避 —— 别在断线之后疯狂冲击编排者。同时要缓存最近一次的已知状态，这样在短暂波动期间，编排者才不会过早地终止或重新分配任务。
+
+核心权衡在于：激进的检测带来更快的重分配，但误判更多；宽松的检测误判更少，但恢复更慢。
+
+[幻灯片 25 —— 实验：终止进程并检测故障。15 分钟。]
+
+到实验时间。第一步：写一个智能体进程，每隔 N 秒推送一次心跳。第二步：写一个编排者循环，在连续漏掉 M 次心跳后把该智能体标记为下线。第三步：在会话进行中终止这个智能体，并测量检测耗时。第四步：调整 N 和 M 重新测试，讨论其中的权衡曲线。
+
+讨论题：对于云端托管的智能体和 NanoClaw 边缘智能体，你分别会选择怎样的 N 和 M？为什么？
+
+# 第五部分 —— 技能编写
+
+[幻灯片 26 —— 章节分隔页。60 分钟。深度专题。]
+
+第五部分，技能编写 —— 我们的第二个深度专题。
+
+[幻灯片 27 —— 一个技能的构成。]
+
+每个技能都由两部分组成。元数据 —— 名称、描述、触发条件。以及执行逻辑 —— 真正运行的代码。
+
+请记住这句话：描述不是文档，它是智能体在做工具选择时所读取的接口。
+
+如果描述写错了，代码写得再好，这个技能也可能永远不会被触发。
+
+[幻灯片 28 —— 糟糕的描述与优秀的描述。]
+
+来看这两个例子。糟糕的写法：“处理数据相关的事情。”含糊的描述会导致漏触发或错触发。
+
+优秀的写法：“查询指定城市与日期的当前天气；仅在用户询问天气状况时使用，不用于查询历史气候数据。”既界定了明确的范围，也写清了何时该用、何时不该用。
+
+练习：点评三到四条刻意写得很差的技能描述，并把它们改写好。一条好的描述会写明动作、输入，以及适用的边界。
+
+[幻灯片 29 —— 安全视角。]
+
+安全视角 —— 这一点与 OWASP 关于智能体应用的指引相呼应。
+
+三条规则。执行沙箱化：隔离技能代码，让恶意或有缺陷的技能无法提权。输入校验：在执行之前校验由模型生成的参数 —— 模型是不可信的调用方。输出校验：在技能输出重新进入智能体的上下文循环之前，先做净化处理。
+
+[幻灯片 30 —— 实验：让技能正确触发。15 分钟。]
+
+实验。第一步：写一个简单的技能 —— 单位换算就很合适 —— 并给它一段清晰的描述。第二步：注册该技能，用一条匹配的提示确认它被正确调用。第三步：把描述改得含糊，再测一次 —— 观察错触发或完全不触发的现象。第四步：恢复原描述，加上基本的输入校验，丢一个对抗性输入进去，确认它会被拒绝。
+
+# 第六部分 —— 通道集成
+
+[幻灯片 31 —— 章节分隔页。60 分钟。]
+
+第六部分，通道集成 —— 消息与语音。
+
+[幻灯片 32 —— 消息通道。]
+
+Telegram 与 WhatsApp。第一，Webhook 与长轮询两种接入方式 —— 一条入站消息如何变成 OpenClaw Redis Stream 上的一个事件。
+
+第二，会话映射 —— 把聊天 ID 或会话 ID 映射到某个智能体实例，保证多轮对话的状态始终连贯。
+
+第三，各平台的特性差异 —— 消息长度限制、图片和语音消息这类以文件形式发送的富媒体，以及送达与已读回执。
+
+第四，速率限制 —— 两个平台的限流都很严格，所以发送回复时要带上重试与退避。
+
+演示环节：一条入站的 Telegram 消息抵达 OpenClaw 智能体，触发一次技能调用，回复再原路返回到同一个聊天会话。
+
+[幻灯片 33 —— 语音通道。]
+
+语音。有两种集成模式。轮次制：录音、转写、智能体处理、语音合成、播放。或者流式：持续的语音识别与语音合成，并支持插话打断。
+
+注意语音识别和语音合成相对 Hermes 所处的位置 —— 转写发生在模型调用之前，合成发生在之后。智能体推理的对象始终是文本。
+
+延迟预算对语音的重要性远高于消息通道 —— 这也正是决定选择云端推理还是 NanoClaw 本地推理的关键因素。
+
+还有打断的处理 —— 插话与静音检测 —— 这是一个用户体验问题，而不只是技术问题。
+
+[幻灯片 34 —— 通道抽象。]
+
+通道抽象。通道应该是一层很薄的适配层，而不是写死在智能体的逻辑里。智能体不应该知道自己面对的是 Telegram、WhatsApp 还是一支麦克风。
+
+在入站事件进入 Redis Stream 之前，先把它们 —— 文本、由语音转写而来的文本、媒体 —— 统一归一化成同一种内部消息格式。
+
+这一点也和心跳机制相交：通道适配层本身也需要做存活监测。一个挂掉的 Webhook 监听器，和一个挂掉的智能体一样糟糕。
+
+[幻灯片 35 —— 实验：接通一个通道。10 分钟。]
+
+实验。第一步：把一个消息通道 —— Telegram 或 WhatsApp 沙箱账号 —— 接到你在第一部分做的 OpenClaw 智能体上。第二步：发送一条能触发第五部分那个技能的消息，确认回复能正确返回。第三步：讨论 —— 如果要在不改动智能体逻辑的前提下接入第二个通道，需要改什么？
+
+# 第七部分 —— A2A 方案：一套独树一帜的协议
+
+[幻灯片 36 —— 章节分隔页。60 分钟。]
+
+第七部分，A2A 方案 —— 一套独树一帜的协议。
+
+[幻灯片 37 —— 为什么不直接用现成方案。]
+
+为什么不直接采用现成的 A2A 标准？现有的方案生态提供了智能体名片发现，以及基于任务的请求响应协议。但它们假设了一套 OpenClaw 并不需要的基础设施 —— 以 HTTP 为中心的同步请求响应模式。
+
+OpenClaw 的差异点，在于把 Redis Streams 作为传输层。持久化、可回放、支持多消费者的消息传递是天然具备的 —— 而大多数 A2A 协议得在纯 HTTP 之上额外搭建这些能力。
+
+设计目标是：一个原生基于流、感知心跳、且与通道无关的 A2A 层 —— 而不是一套通用的点对点 RPC。
+
+[幻灯片 38 —— 协议的构成。]
+
+自研协议的构成。消息信封包含：发送方智能体 ID、接收方智能体 ID 或广播主题、任务 ID、负载，以及用于多轮任务追踪的关联 ID。
+
+流拓扑：是每个智能体一条收件流，还是配合消费者组使用共享的主题流？这里要想清楚扇出与扇入之间的取舍。
+
+任务生命周期状态：已提议、已接受、进行中、已完成或已失败 —— 它们都以流条目的形式落盘，因此任何消费者都能仅凭流本身重建任务的完整历史。可回放性本身就是一项调试利器。
+
+关键差别在于：典型的 A2A 协议把发现与协商同传输分开处理；而在这里，两者是统一的 —— 流本身就是事实来源。
+
+[幻灯片 39 —— 把心跳与技能整合进 A2A。]
+
+现在把心跳和技能整合进 A2A。复用第四部分的心跳流，让它同时充当能力通告通道 —— 心跳负载中携带该智能体当前已注册的技能列表，这样编排者做路由决策时只需要一次查询，而不是两次。
+
+路由逻辑：收到任务，匹配所需技能，找出通告了该技能的智能体，再筛选出心跳仍然存活的，然后派发。
+
+还有这套设计特有的故障处理方式：由于任务保存在可回放的流上，一个新启动的智能体 —— 或是一台刚刚恢复的 NanoClaw 设备 —— 只要从自己最后确认的偏移量继续读取，就能自动补上错过的任务分配。
+
+[幻灯片 40 —— 实验：终止、重启、恢复。10 分钟。]
+
+实验。第一步：为自研 A2A 协议定义消息信封的结构。第二步：实现一次双智能体交互 —— 智能体 A 提议一项任务，智能体 B 接受并通过流条目上报进度。第三步：在任务进行中终止并重启智能体 B —— 确认它是从流中恢复，而不是丢失了任务状态。第四步：讨论 —— 如果换成标准的同步式 A2A 协议，哪些地方会失效？你会失去什么，又会得到什么？
+
+# 综合实验 —— 从通道到技能的端到端链路
+
+[幻灯片 41 —— 20 分钟。串联全部七个部分。]
+
+综合实验 —— 把所有内容串联起来。
+
+目标是：一条消息，或者一段语音输入，通过真实通道进入系统，经由自研 A2A 协议路由到一台运行 Hermes 的 NanoClaw 边缘智能体，由它调用一个已注册的技能；与此同时，OpenClaw 编排者只会把任务派发给心跳健康、且通告了对应能力的智能体。
+
+第一步：确认你在第六部分接好通道的智能体，就是第三部分那个 NanoClaw 加 Hermes 智能体 —— 并且已经装上了第五部分的技能、第四部分的心跳上报，以及第七部分的信封处理逻辑。
+
+第二步：发送一条需要用到该技能的通道消息。
+
+第三步：编排者按第七部分的路由逻辑 —— 技能匹配加心跳存活 —— 选中并派发给这台边缘智能体。
+
+第四步：模拟边缘智能体在任务进行中掉线。确认编排者会重新路由或把任务排队 —— 并且恢复后的智能体能从流中续上。
+
+第五步：讨论 —— 可回放性如何改变了“进行中的任务会怎样”这个问题的答案？而在消息通道与语音通道上，这件事呈现给用户的方式又有什么不同？
+
+# 课程总结
+
+[幻灯片 42 —— 七个层面的完整脉络。]
+
+我们把这七个层面回顾一遍。OpenClaw —— 编排。Hermes —— 模型。NanoClaw —— 边缘。心跳 —— 对状态的信任。技能 —— 对能力的信任。通道 —— 对送达的信任。自研 A2A —— 对协同的信任。
+
+下面进入自由问答。
+
+给学有余力的同学几个延伸方向：把健康状态与能力通告合并成一个注册表，让编排者的路由只依赖一路信号 —— 这一点在 7.3 已经埋下伏笔。支持插话打断的流式语音，可以作为后续的深度专题。以及，把自研 A2A 协议与标准的同步式 A2A 实现做一次基准对比。
+
+[幻灯片 43 —— 材料清单，供需要复现环境的同学参考。]
+
+# 结语
+
+[幻灯片 50 —— 致谢页。向学有余力的同学指出 LangGraph 附录。]
+
+谢谢各位。课后延伸内容：四个独立实验 —— 心跳的生产者与消费者、技能描述的点评与改写、通道接线，以及 A2A 消息信封 —— 另外还有一次后续的复盘课。
+
+如果你还想再深入：附录讲的是如何用 LangGraph 把 A2A 与 Hermes 串起来 —— 包括为什么真正支撑图中断点正确恢复的是 LangGraph 的检查点，而不仅仅是任务 ID。
+
+复盘课上见。
+
+[讲稿结束]
+</script>
+
 <script>
 (function () {
   // localStorage can throw on some file:// / privacy contexts — fail soft
@@ -535,30 +932,109 @@ See you at the review session.
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
   };
 
-  const scroller = document.getElementById('scroller');
-  const content = document.getElementById('content');
-  const playBtn = document.getElementById('playBtn');
-  const speed = document.getElementById('speed');
-  const speedVal = document.getElementById('speedVal');
-  const fontSize = document.getElementById('fontSize');
-  const fontVal = document.getElementById('fontVal');
-  const progress = document.getElementById('progress');
-  const bar = document.getElementById('bar');
-  const editor = document.getElementById('editor');
-  const editArea = document.getElementById('editArea');
+  // ---------- i18n ----------
+  const I18N = {
+    en: {
+      htmlLang: 'en',
+      docTitle: 'Teleprompter — Building Autonomous AI Agents (Day 3)',
+      play: '&#9654; Play',
+      pause: '&#10074;&#10074; Pause',
+      speedLbl: 'Speed',
+      fontLbl: 'Font',
+      flipX: '&#8646; Flip H', flipXTitle: 'Mirror horizontally (for beam-splitter rig)',
+      flipY: '&#8693; Flip V', flipYTitle: 'Flip vertically',
+      prevSlide: '&#9666; Slide', prevSlideTitle: 'Jump to previous slide segment',
+      nextSlide: 'Slide &#9656;', nextSlideTitle: 'Jump to next slide segment',
+      reset: '&#10548; Top', resetTitle: 'Back to top',
+      panel: '&#9635; Panel', panelTitle: 'Show/hide slide panel',
+      edit: '&#9998; Script', editTitle: 'Edit script',
+      langBtn: '&#127760; 中文', langTitle: 'Switch script and interface to Chinese (切换到中文)',
+      keys: '<kbd>Space</kbd> play &nbsp;<kbd>&uarr;</kbd><kbd>&darr;</kbd> speed' +
+            ' &nbsp;<kbd>&larr;</kbd><kbd>&rarr;</kbd> font &nbsp;<kbd>PgUp</kbd><kbd>PgDn</kbd> slide' +
+            ' &nbsp;<kbd>F</kbd> fullscreen &nbsp;<kbd>H</kbd> hide bar &nbsp;<kbd>L</kbd> language',
+      counter: (n, total) => 'Slide ' + n + ' / ' + total,
+      nextLbl: 'NEXT &#9656;',
+      curAlt: 'Current slide',
+      nextAlt: 'Next slide',
+      slideImgTitle: 'Click to advance to next slide',
+      editorTitle: 'Teleprompter Script — English',
+      editorHint: 'Formatting: <b># Section</b> header &nbsp;·&nbsp; <b>## Sub-section</b>' +
+                  ' &nbsp;·&nbsp; <b>[stage direction]</b> dim italic &nbsp;·&nbsp; blank line = pause beat' +
+                  ' &nbsp;·&nbsp; <b>[Slide 7 …]</b> syncs the slide panel',
+      loadDefault: 'Load default',
+      cancel: 'Cancel',
+      apply: 'Apply &amp; Close'
+    },
+    zh: {
+      htmlLang: 'zh-Hans',
+      docTitle: '提词器 —— 构建自主式 AI 智能体（第三天）',
+      play: '&#9654; 播放',
+      pause: '&#10074;&#10074; 暂停',
+      speedLbl: '速度',
+      fontLbl: '字号',
+      flipX: '&#8646; 水平镜像', flipXTitle: '水平镜像翻转（配合分光镜提词设备使用）',
+      flipY: '&#8693; 垂直翻转', flipYTitle: '垂直翻转',
+      prevSlide: '&#9666; 上一张', prevSlideTitle: '跳到上一张幻灯片对应的讲稿',
+      nextSlide: '下一张 &#9656;', nextSlideTitle: '跳到下一张幻灯片对应的讲稿',
+      reset: '&#10548; 回到开头', resetTitle: '回到讲稿开头',
+      panel: '&#9635; 幻灯片', panelTitle: '显示或隐藏幻灯片预览面板',
+      edit: '&#9998; 编辑讲稿', editTitle: '编辑讲稿内容',
+      langBtn: '&#127760; English', langTitle: '将讲稿与界面切换为英文（Switch to English）',
+      keys: '<kbd>空格</kbd> 播放 &nbsp;<kbd>&uarr;</kbd><kbd>&darr;</kbd> 速度' +
+            ' &nbsp;<kbd>&larr;</kbd><kbd>&rarr;</kbd> 字号 &nbsp;<kbd>PgUp</kbd><kbd>PgDn</kbd> 切换幻灯片' +
+            ' &nbsp;<kbd>F</kbd> 全屏 &nbsp;<kbd>H</kbd> 隐藏工具栏 &nbsp;<kbd>L</kbd> 中英切换',
+      counter: (n, total) => '第 ' + n + ' 张 / 共 ' + total + ' 张',
+      nextLbl: '下一张 &#9656;',
+      curAlt: '当前幻灯片',
+      nextAlt: '下一张幻灯片',
+      slideImgTitle: '点击可跳到下一张幻灯片',
+      editorTitle: '提词器讲稿 —— 中文',
+      editorHint: '格式说明：<b># 章节标题</b> &nbsp;·&nbsp; <b>## 小节标题</b>' +
+                  ' &nbsp;·&nbsp; <b>[舞台提示]</b> 显示为灰色斜体 &nbsp;·&nbsp; 空行 = 停顿' +
+                  ' &nbsp;·&nbsp; <b>[幻灯片 7 …]</b> 用于同步幻灯片面板',
+      loadDefault: '载入默认讲稿',
+      cancel: '取消',
+      apply: '应用并关闭'
+    }
+  };
+
+  const $ = id => document.getElementById(id);
+
+  const scroller = $('scroller');
+  const content = $('content');
+  const playBtn = $('playBtn');
+  const speed = $('speed');
+  const speedVal = $('speedVal');
+  const fontSize = $('fontSize');
+  const fontVal = $('fontVal');
+  const progress = $('progress');
+  const bar = $('bar');
+  const editor = $('editor');
+  const editArea = $('editArea');
+  const langBtn = $('langBtn');
 
   let playing = false;
   let pxPerSec = Number(store.get('tp_speed') || 80);
   let fSize = Number(store.get('tp_font') || 44);
   let lastTs = null;
+  let lang = store.get('tp_lang') === 'zh' ? 'zh' : 'en';
+  let currentScript = '';
 
   // ---------- script parsing ----------
+  // Slide cues are recognised in both languages: "[Slide 7 …]" / "[幻灯片 7 …]".
+  const SLIDE_CUE = /^[\[【]\s*(?:Slide|幻灯片|投影片|第)\s*(\d+)/i;
+
+  function isStageDirection(t) {
+    return (t.startsWith('[') && t.endsWith(']')) ||
+           (t.startsWith('【') && t.endsWith('】'));
+  }
+
   function render(text) {
     const frag = document.createDocumentFragment();
     let slideNum = 1;
     text.split(/\r?\n/).forEach(line => {
       const t = line.trim();
-      const mSlide = t.match(/^\[Slide (\d+)/);
+      const mSlide = t.match(SLIDE_CUE);
       if (mSlide) slideNum = parseInt(mSlide[1], 10);
       let el;
       if (!t) {
@@ -570,7 +1046,7 @@ See you at the review session.
       } else if (t.startsWith('# ')) {
         el = document.createElement('h2');
         el.textContent = t.slice(2);
-      } else if (t.startsWith('[') && t.endsWith(']')) {
+      } else if (isStageDirection(t)) {
         el = document.createElement('p');
         el.className = 'stage';
         el.textContent = t;
@@ -588,7 +1064,7 @@ See you at the review session.
   // ---------- playback ----------
   function setPlaying(v) {
     playing = v;
-    playBtn.innerHTML = v ? '&#10074;&#10074; Pause' : '&#9654; Play';
+    playBtn.innerHTML = v ? I18N[lang].pause : I18N[lang].play;
     lastTs = null;
     if (v) requestAnimationFrame(tick);
   }
@@ -613,10 +1089,10 @@ See you at the review session.
 
   // ---------- slide panel sync ----------
   const TOTAL_SLIDES = 50;
-  const slideImg = document.getElementById('slideImg');
-  const nextImg = document.getElementById('nextImg');
-  const nextWrap = document.getElementById('nextWrap');
-  const slideCounter = document.getElementById('slideCounter');
+  const slideImg = $('slideImg');
+  const nextImg = $('nextImg');
+  const nextWrap = $('nextWrap');
+  const slideCounter = $('slideCounter');
   let curSlide = 0;
 
   function pad2(n) { return String(n).padStart(2, '0'); }
@@ -632,12 +1108,12 @@ See you at the review session.
     return n;
   }
 
-  function syncSlide() {
+  function syncSlide(force) {
     const n = slideAtReadingLine();
-    if (n === curSlide) return;
+    if (n === curSlide && !force) return;
     curSlide = n;
     slideImg.src = 'teleprompter_slides/slide' + pad2(n) + '.png';
-    slideCounter.textContent = 'Slide ' + n + ' / ' + TOTAL_SLIDES;
+    slideCounter.textContent = I18N[lang].counter(n, TOTAL_SLIDES);
     if (n < TOTAL_SLIDES) {
       nextImg.src = 'teleprompter_slides/slide' + pad2(n + 1) + '.png';
       nextWrap.style.visibility = 'visible';
@@ -653,14 +1129,74 @@ See you at the review session.
     if (el) scroller.scrollTop = el.offsetTop - scroller.clientHeight * 0.42;
   }
 
-  document.getElementById('prevSlide').addEventListener('click', () => gotoSlide(curSlide - 1));
-  document.getElementById('nextSlide').addEventListener('click', () => gotoSlide(curSlide + 1));
+  $('prevSlide').addEventListener('click', () => gotoSlide(curSlide - 1));
+  $('nextSlide').addEventListener('click', () => gotoSlide(curSlide + 1));
   slideImg.addEventListener('click', () => gotoSlide(curSlide + 1));
-  document.getElementById('panelBtn').addEventListener('click', () => {
+  $('panelBtn').addEventListener('click', () => {
     document.body.classList.toggle('no-panel');
     store.set('tp_nopanel', document.body.classList.contains('no-panel') ? '1' : '');
   });
   if (store.get('tp_nopanel')) document.body.classList.add('no-panel');
+
+  // ---------- language ----------
+  function defaultScript(l) {
+    return $('script-' + l).textContent.replace(/^\n/, '');
+  }
+
+  // Scripts are stored per language, so edits to one never clobber the other.
+  // `tp_script` is the pre-i18n key — treat it as the saved English script.
+  function savedScript(l) {
+    return store.get('tp_script_' + l) ||
+           (l === 'en' ? store.get('tp_script') : null) ||
+           defaultScript(l);
+  }
+
+  function applyLang(l, keepPosition) {
+    const slideBefore = keepPosition ? curSlide : 0;
+    lang = l;
+    store.set('tp_lang', l);
+    const t = I18N[l];
+
+    document.documentElement.lang = t.htmlLang;
+    document.title = t.docTitle;
+
+    playBtn.innerHTML = playing ? t.pause : t.play;
+    $('speedLbl').textContent = t.speedLbl;
+    $('fontLbl').textContent = t.fontLbl;
+    $('flipX').innerHTML = t.flipX;   $('flipX').title = t.flipXTitle;
+    $('flipY').innerHTML = t.flipY;   $('flipY').title = t.flipYTitle;
+    $('prevSlide').innerHTML = t.prevSlide; $('prevSlide').title = t.prevSlideTitle;
+    $('nextSlide').innerHTML = t.nextSlide; $('nextSlide').title = t.nextSlideTitle;
+    $('resetBtn').innerHTML = t.reset; $('resetBtn').title = t.resetTitle;
+    $('panelBtn').innerHTML = t.panel; $('panelBtn').title = t.panelTitle;
+    $('editBtn').innerHTML = t.edit;  $('editBtn').title = t.editTitle;
+    langBtn.innerHTML = t.langBtn;    langBtn.title = t.langTitle;
+    langBtn.setAttribute('aria-label', t.langTitle);
+    $('keysHint').innerHTML = t.keys;
+
+    $('nextLbl').innerHTML = t.nextLbl;
+    slideImg.alt = t.curAlt;
+    slideImg.title = t.slideImgTitle;
+    nextImg.alt = t.nextAlt;
+
+    $('editorTitle').textContent = t.editorTitle;
+    $('editorHint').innerHTML = t.editorHint;
+    $('loadDefault').textContent = t.loadDefault;
+    $('cancelEdit').textContent = t.cancel;
+    $('applyEdit').innerHTML = t.apply;
+
+    currentScript = savedScript(l);
+    render(currentScript);
+
+    // Slide numbers are shared across both scripts, so we can hold the
+    // presenter's place in the deck when the language flips mid-talk.
+    if (slideBefore > 1) gotoSlide(slideBefore);
+    else scroller.scrollTop = 0;
+    syncSlide(true);
+    updateProgress();
+  }
+
+  langBtn.addEventListener('click', () => applyLang(lang === 'en' ? 'zh' : 'en', true));
 
   // ---------- controls ----------
   speed.value = pxPerSec; speedVal.textContent = pxPerSec;
@@ -679,30 +1215,30 @@ See you at the review session.
     document.documentElement.style.setProperty('--font-size', fSize + 'px');
     store.set('tp_font', fSize);
   });
-  document.getElementById('flipX').addEventListener('click', () =>
-    content.classList.toggle('flip-x'));
-  document.getElementById('flipY').addEventListener('click', () =>
-    content.classList.toggle('flip-y'));
-  document.getElementById('resetBtn').addEventListener('click', () => {
+  $('flipX').addEventListener('click', () => content.classList.toggle('flip-x'));
+  $('flipY').addEventListener('click', () => content.classList.toggle('flip-y'));
+  $('resetBtn').addEventListener('click', () => {
     setPlaying(false);
     scroller.scrollTop = 0;
   });
 
-  // editor
-  document.getElementById('editBtn').addEventListener('click', () => {
+  // editor — always edits the script of the language currently on screen
+  $('editBtn').addEventListener('click', () => {
     editArea.value = currentScript;
     editor.classList.add('open');
     editArea.focus();
   });
-  document.getElementById('cancelEdit').addEventListener('click', () =>
-    editor.classList.remove('open'));
-  document.getElementById('applyEdit').addEventListener('click', () => {
+  $('loadDefault').addEventListener('click', () => {
+    editArea.value = defaultScript(lang);
+    editArea.focus();
+  });
+  $('cancelEdit').addEventListener('click', () => editor.classList.remove('open'));
+  $('applyEdit').addEventListener('click', () => {
     currentScript = editArea.value;
-    store.set('tp_script', currentScript);
+    store.set('tp_script_' + lang, currentScript);
     render(currentScript);
     scroller.scrollTop = 0;
-    curSlide = 0;
-    syncSlide();
+    syncSlide(true);
     editor.classList.remove('open');
   });
 
@@ -736,17 +1272,15 @@ See you at the review session.
         else document.documentElement.requestFullscreen(); break;
       case 'KeyH':
         bar.classList.toggle('hidden'); break;
+      case 'KeyL':
+        applyLang(lang === 'en' ? 'zh' : 'en', true); break;
       case 'Escape':
         setPlaying(false); break;
     }
   });
 
   // ---------- init ----------
-  let currentScript = store.get('tp_script') ||
-    document.getElementById('default-script').textContent;
-  render(currentScript);
-  updateProgress();
-  syncSlide();
+  applyLang(lang, false);
 })();
 </script>
 </body>
