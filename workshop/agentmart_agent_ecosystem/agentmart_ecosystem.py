@@ -136,7 +136,7 @@ class OpenRouterHermesClient:
         # other completion token. Capping the effort is the single biggest latency win;
         # set OPENROUTER_REASONING_EFFORT=default to hand the model its full budget back.
         self.reasoning_effort = os.getenv(
-            "OPENROUTER_REASONING_EFFORT", config.get("reasoning_effort", "low")
+            "OPENROUTER_REASONING_EFFORT", config.get("reasoning_effort", "medium")
         )
         self.http_referer = os.getenv("OPENROUTER_HTTP_REFERER", "http://localhost")
         self.app_title = os.getenv("OPENROUTER_APP_TITLE", "AgentMart Workshop")

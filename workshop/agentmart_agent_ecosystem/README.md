@@ -66,6 +66,10 @@ in `hermes_a2a_config.json` under `intent_routing`.
 | `catalog.py` | Query helpers the agents use to read the seeded listing. |
 | `orders.py` | Read/write helpers over the order book: orders, payments, draft orders. |
 | `test_scenarios.py` | End-to-end scenario suite for the Hermes + A2A flows. |
+| `a2a_server.py` | Serves the ecosystem over A2A v1.0 so a real agent can call it. |
+| `TESTING.md` | End-to-end test prompts for all three layers, plus A2A list/history. |
+| `BENCHMARK.md` | Model comparison and the reasoning behind the chosen model/effort. |
+| `SOUL.md` | Hermes persona plus the AgentMart routing rule; install to `~/.hermes/`. |
 | `data/products.json` | Source product catalog: products, stock, warehouses, delivery options. |
 | `data/orders.json` | Source order book: customers, orders, payment methods, payments. |
 | `data/agentmart.db` | Generated SQLite database (git-ignored; created by `seed_data.py`). |
@@ -153,7 +157,7 @@ OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_MODEL=qwen/qwen3.7-flash
 OPENROUTER_TEMPERATURE=0.2
 OPENROUTER_MAX_TOKENS=6000
-OPENROUTER_REASONING_EFFORT=low
+OPENROUTER_REASONING_EFFORT=medium
 ```
 
 ### 3. How settings resolve
@@ -175,7 +179,7 @@ The config block declares the model as part of the agent's identity:
   "fallback_models": ["deepseek/deepseek-v4-flash-0731", "openai/gpt-oss-120b"],
   "temperature": 0.2,
   "max_tokens": 6000,
-  "reasoning_effort": "low"
+  "reasoning_effort": "medium"
 }
 ```
 
@@ -216,7 +220,8 @@ Two lessons worth keeping:
 
 Reasoning models (including the default) share `max_tokens` between reasoning and
 the visible reply, so keep `OPENROUTER_MAX_TOKENS` generous and
-`OPENROUTER_REASONING_EFFORT=low` — otherwise agents return empty strings.
+`OPENROUTER_REASONING_EFFORT=medium` — otherwise agents return empty strings.
+See `BENCHMARK.md` for the measurements behind both the model and the effort level.
 
 Switch model for a single run without editing any file:
 

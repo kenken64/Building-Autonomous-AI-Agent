@@ -302,11 +302,11 @@ Expect roughly 30–60s for a six-agent request. Model latency varies run to run
 | Hermes: "unknown agent 'agentmart'" | Peer not registered | Check `a2a_agents` in `~/.hermes/config.yaml` |
 | Hermes: "could not reach agentmart" | Server not running | `./.venv/bin/python a2a_server.py` |
 | Hermes: "timed out" | Chain slower than the peer timeout | Raise `a2a_agents.agentmart.timeout` (currently 900s) |
-| Agent replies are empty strings | Reasoning ate the token budget | `OPENROUTER_MAX_TOKENS=6000`, `OPENROUTER_REASONING_EFFORT=low` |
+| Agent replies are empty strings | Reasoning ate the token budget | `OPENROUTER_MAX_TOKENS=6000`, `OPENROUTER_REASONING_EFFORT=medium` |
 | Reply invents products/prices | Catalog not seeded | `./.venv/bin/python seed_data.py --reset` |
 | `CatalogNotSeededError` | No `data/agentmart.db` | `./.venv/bin/python seed_data.py` |
 | Hermes has no `a2a_*` tools | Toolset off for that platform | `hermes tools enable a2a --platform telegram` then `hermes gateway restart` |
 | Telegram silent | Gateway down or user not allowed | `hermes gateway status`; check `TELEGRAM_ALLOWED_USERS` in `~/.hermes/.env` |
-| Six-agent run takes minutes | Reasoning effort unset | Confirm `OPENROUTER_REASONING_EFFORT=low` in `.env` |
+| Six-agent run takes minutes | Reasoning effort unset | Confirm `OPENROUTER_REASONING_EFFORT=medium` in `.env` |
 | Reply names real brands, not seeded SKUs | Routing rule missing | `cp SOUL.md ~/.hermes/SOUL.md && hermes gateway restart` |
 | `HTTP 402: requires more credits` | OpenRouter key limit reached | Top up or raise the key cap at openrouter.ai/settings/credits |

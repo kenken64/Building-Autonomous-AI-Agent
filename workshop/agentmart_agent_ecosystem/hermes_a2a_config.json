@@ -29,7 +29,7 @@
       ],
       "temperature": 0.2,
       "max_tokens": 6000,
-      "reasoning_effort": "low"
+      "reasoning_effort": "medium"
     }
   },
   "a2a_connection": {
