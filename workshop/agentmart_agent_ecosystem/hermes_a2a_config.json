@@ -19,7 +19,14 @@
       "provider": "openrouter",
       "base_url_env": "OPENROUTER_BASE_URL",
       "api_key_env": "OPENROUTER_API_KEY",
-      "model_env": "OPENROUTER_MODEL"
+      "model_env": "OPENROUTER_MODEL",
+      "default_model": "moonshotai/kimi-k3",
+      "fallback_models": [
+        "moonshotai/kimi-k2.6",
+        "moonshotai/kimi-k2-0905"
+      ],
+      "temperature": 0.2,
+      "max_tokens": 1200
     }
   },
   "a2a_connection": {

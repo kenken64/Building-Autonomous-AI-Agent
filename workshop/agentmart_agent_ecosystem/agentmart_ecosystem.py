@@ -12,6 +12,8 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 
+from catalog import CatalogNotSeededError, format_product_listing, query_products
+
 
 AgentName = Literal[
     "hermes_myshopper",
@@ -29,6 +31,7 @@ class AgentMartState(TypedDict, total=False):
     dry_run: bool
     hermes_a2a_config: dict[str, Any]
     a2a_task: dict[str, Any]
+    product_listing: str
     shopping_result: str
     pricing_result: str
     inventory_result: str
@@ -54,13 +57,28 @@ class A2AEnvelope:
         return data
 
 
+DEFAULT_MODEL = "moonshotai/kimi-k3"
+
+
 class OpenRouterHermesClient:
-    def __init__(self, dry_run: bool = False) -> None:
+    """OpenAI-compatible client for OpenRouter, configured for Hermes/MyShopper.
+
+    Settings resolve in this order, first match wins:
+      1. environment variables / .env  (OPENROUTER_MODEL, ...)
+      2. the model block in hermes_a2a_config.json
+      3. the built-in defaults
+    """
+
+    def __init__(self, dry_run: bool = False, model_config: dict[str, Any] | None = None) -> None:
         load_dotenv()
+        config = model_config or {}
         self.dry_run = dry_run
         self.api_key = os.getenv("OPENROUTER_API_KEY", "")
         self.base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-        self.model = os.getenv("OPENROUTER_MODEL", "openai/gpt-5.2")
+        self.model = os.getenv("OPENROUTER_MODEL") or config.get("default_model") or DEFAULT_MODEL
+        self.fallback_models = config.get("fallback_models", [])
+        self.temperature = float(os.getenv("OPENROUTER_TEMPERATURE", config.get("temperature", 0.2)))
+        self.max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS", config.get("max_tokens", 1200)))
         self.http_referer = os.getenv("OPENROUTER_HTTP_REFERER", "http://localhost")
         self.app_title = os.getenv("OPENROUTER_APP_TITLE", "AgentMart Workshop")
 
@@ -71,17 +89,24 @@ class OpenRouterHermesClient:
         from openai import OpenAI
 
         client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+        extra_body: dict[str, Any] = {}
+        if self.fallback_models:
+            # OpenRouter retries these in order if the primary model is unavailable.
+            extra_body["models"] = [self.model, *self.fallback_models]
+
         response = client.chat.completions.create(
             extra_headers={
                 "HTTP-Referer": self.http_referer,
-                "X-OpenRouter-Title": self.app_title,
+                "X-Title": self.app_title,
             },
+            extra_body=extra_body,
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.2,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
         )
         return response.choices[0].message.content or ""
 
@@ -91,10 +116,31 @@ class OpenRouterHermesClient:
         return f"[dry-run:{agent_name}] {compact_prompt[:260]}"
 
 
+def load_product_listing(
+    category: str | None = None,
+    max_price: float | None = None,
+    limit: int = 25,
+) -> str:
+    """Render the seeded AgentMart product listing for the agent prompts."""
+    try:
+        products = query_products(category=category, max_price=max_price, limit=limit)
+    except CatalogNotSeededError as exc:
+        return f"(catalog unavailable: {exc})"
+    if not products:
+        return "(no products in the seeded catalog matched the filters)"
+    return format_product_listing(products)
+
+
 def load_hermes_a2a_config(config_path: str | None = None) -> dict[str, Any]:
     path = Path(config_path) if config_path else Path(__file__).with_name("hermes_a2a_config.json")
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def model_config_from_state(state: AgentMartState) -> dict[str, Any]:
+    """Read the Hermes model block (provider, model, temperature) from graph state."""
+    config = state.get("hermes_a2a_config") or {}
+    return config.get("hermes_agent", {}).get("model", {})
 
 
 def append_transcript(
@@ -121,7 +167,10 @@ def make_agent_node(
     output_key: str,
 ) -> Callable[[AgentMartState], AgentMartState]:
     def node(state: AgentMartState) -> AgentMartState:
-        client = OpenRouterHermesClient(dry_run=state.get("dry_run", False))
+        client = OpenRouterHermesClient(
+            dry_run=state.get("dry_run", False),
+            model_config=model_config_from_state(state),
+        )
         result = client.complete(agent, system_prompt, prompt_builder(state))
         next_state = append_transcript(state, agent, result)
         next_state[output_key] = result
@@ -156,7 +205,10 @@ def hermes_myshopper_node(state: AgentMartState) -> AgentMartState:
         protocol=a2a_config["protocol"],
     ).to_dict()
 
-    client = OpenRouterHermesClient(dry_run=state.get("dry_run", False))
+    client = OpenRouterHermesClient(
+        dry_run=state.get("dry_run", False),
+        model_config=hermes_config.get("model", {}),
+    )
     message = client.complete(
         "hermes_myshopper",
         (
@@ -174,11 +226,18 @@ def hermes_myshopper_node(state: AgentMartState) -> AgentMartState:
 
 shopping_agent_node = make_agent_node(
     "shopping_agent",
-    "You are the AgentMart Shopping Agent. Find candidate products that match the customer's intent.",
+    (
+        "You are the AgentMart Shopping Agent. Find candidate products that match the customer's intent. "
+        "Only recommend SKUs that appear in the AgentMart product listing you are given."
+    ),
     lambda state: json.dumps(
         {
             "a2a_task": state["a2a_task"],
-            "instruction": "Return 3 candidate options with a short reason for each.",
+            "product_listing": state.get("product_listing", ""),
+            "instruction": (
+                "Pick 3 candidate SKUs from the product listing and give a short reason for each. "
+                "Cite the SKU and price exactly as listed. Do not invent products."
+            ),
         },
         indent=2,
     ),
@@ -193,7 +252,11 @@ pricing_agent_node = make_agent_node(
         {
             "a2a_task": state["a2a_task"],
             "shopping_result": state["shopping_result"],
-            "instruction": "Rank the candidates by value and note any price risks.",
+            "product_listing": state.get("product_listing", ""),
+            "instruction": (
+                "Rank the candidates by value using the listed price and list price. "
+                "Note any discount, budget overrun, or price risk."
+            ),
         },
         indent=2,
     ),
@@ -209,7 +272,11 @@ inventory_agent_node = make_agent_node(
             "a2a_task": state["a2a_task"],
             "shopping_result": state["shopping_result"],
             "pricing_result": state["pricing_result"],
-            "instruction": "Mark which options are easiest to fulfill and what needs confirmation.",
+            "product_listing": state.get("product_listing", ""),
+            "instruction": (
+                "Use the stock lines in the product listing. Mark which options are in stock now, "
+                "which depend on a restock, and what needs confirmation."
+            ),
         },
         indent=2,
     ),
@@ -224,7 +291,11 @@ fulfillment_agent_node = make_agent_node(
         {
             "a2a_task": state["a2a_task"],
             "inventory_result": state["inventory_result"],
-            "instruction": "Recommend fulfillment path and mention delivery constraints.",
+            "product_listing": state.get("product_listing", ""),
+            "instruction": (
+                "Recommend a fulfillment path using the delivery methods, ETAs, and costs in the listing. "
+                "Mention which warehouse ships the item."
+            ),
         },
         indent=2,
     ),
@@ -277,6 +348,8 @@ def run_agentmart(
     channel: str = "webchat",
     dry_run: bool = False,
     config_path: str | None = None,
+    category: str | None = None,
+    max_price: float | None = None,
 ) -> AgentMartState:
     app = build_graph()
     return app.invoke(
@@ -285,20 +358,80 @@ def run_agentmart(
             "channel": channel,
             "dry_run": dry_run,
             "hermes_a2a_config": load_hermes_a2a_config(config_path),
+            "product_listing": load_product_listing(category=category, max_price=max_price),
             "transcript": [],
         }
     )
 
 
+def check_model_connection(config_path: str | None = None) -> int:
+    """Verify the OpenRouter key and model before running the full graph."""
+    config = load_hermes_a2a_config(config_path)
+    model_config = config["hermes_agent"].get("model", {})
+    client = OpenRouterHermesClient(model_config=model_config)
+
+    print("Hermes model configuration")
+    print(f"  provider    : {model_config.get('provider', 'openrouter')}")
+    print(f"  base_url    : {client.base_url}")
+    print(f"  model       : {client.model}")
+    print(f"  fallbacks   : {', '.join(client.fallback_models) or 'none'}")
+    print(f"  temperature : {client.temperature}")
+    print(f"  max_tokens  : {client.max_tokens}")
+    print(f"  api_key     : {'set' if client.api_key else 'MISSING'}")
+
+    if not client.api_key:
+        print("\nOPENROUTER_API_KEY is not set. Add it to .env, then re-run.")
+        return 1
+
+    print("\nCalling OpenRouter...")
+    try:
+        reply = client.complete(
+            "hermes_myshopper",
+            "You are Hermes/MyShopper. Reply with a single short sentence.",
+            "Confirm that the Hermes model connection is working.",
+        )
+    except Exception as exc:  # noqa: BLE001 - surface any client/transport error to the workshop user
+        print(f"Connection failed: {type(exc).__name__}: {exc}")
+        return 1
+
+    print(f"Reply: {reply.strip()[:300]}")
+    print("\nConnection OK.")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the AgentMart LangGraph workshop demo.")
-    parser.add_argument("request", help="Customer buying request to send through Hermes/MyShopper.")
+    parser.add_argument(
+        "request",
+        nargs="?",
+        help="Customer buying request to send through Hermes/MyShopper.",
+    )
     parser.add_argument("--channel", default="webchat", help="Customer channel name.")
     parser.add_argument("--config", help="Path to Hermes A2A configuration JSON.")
     parser.add_argument("--dry-run", action="store_true", help="Run without calling OpenRouter.")
+    parser.add_argument("--category", help="Limit the seeded product listing to a category, e.g. audio/earbuds.")
+    parser.add_argument("--max-price", type=float, help="Limit the seeded product listing by maximum price.")
+    parser.add_argument(
+        "--check-model",
+        action="store_true",
+        help="Print the Hermes model settings and test the OpenRouter connection, then exit.",
+    )
     args = parser.parse_args()
 
-    result = run_agentmart(args.request, channel=args.channel, dry_run=args.dry_run, config_path=args.config)
+    if args.check_model:
+        raise SystemExit(check_model_connection(args.config))
+
+    if not args.request:
+        parser.error("a customer request is required (or use --check-model)")
+
+    result = run_agentmart(
+        args.request,
+        channel=args.channel,
+        dry_run=args.dry_run,
+        config_path=args.config,
+        category=args.category,
+        max_price=args.max_price,
+    )
     print(json.dumps(result, indent=2))
 
 

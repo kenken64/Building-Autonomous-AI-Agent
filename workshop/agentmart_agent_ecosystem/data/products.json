@@ -1,0 +1,217 @@
+{
+  "catalog_version": "2026.09",
+  "currency": "USD",
+  "warehouses": [
+    { "code": "SG-CENTRAL", "name": "Singapore Central DC", "region": "APAC" },
+    { "code": "MY-JB", "name": "Johor Bahru DC", "region": "APAC" },
+    { "code": "US-WEST", "name": "Fremont DC", "region": "AMER" }
+  ],
+  "fulfillment_options": [
+    { "warehouse": "SG-CENTRAL", "method": "same_day_courier", "eta_days": 0, "cost_usd": 9.9 },
+    { "warehouse": "SG-CENTRAL", "method": "standard_delivery", "eta_days": 2, "cost_usd": 0.0 },
+    { "warehouse": "SG-CENTRAL", "method": "locker_pickup", "eta_days": 1, "cost_usd": 0.0 },
+    { "warehouse": "MY-JB", "method": "standard_delivery", "eta_days": 4, "cost_usd": 4.5 },
+    { "warehouse": "MY-JB", "method": "economy_delivery", "eta_days": 7, "cost_usd": 0.0 },
+    { "warehouse": "US-WEST", "method": "standard_delivery", "eta_days": 9, "cost_usd": 18.0 }
+  ],
+  "products": [
+    {
+      "sku": "AM-EAR-1001",
+      "name": "Aurora Buds Pro",
+      "brand": "Aurora",
+      "category": "audio/earbuds",
+      "price_usd": 109.0,
+      "list_price_usd": 139.0,
+      "rating": 4.6,
+      "review_count": 2841,
+      "battery_hours": 32,
+      "features": ["active noise cancelling", "wireless charging", "IPX5", "multipoint pairing"],
+      "description": "Flagship-feel ANC earbuds with a 32h total battery and a case that charges wirelessly.",
+      "inventory": [
+        { "warehouse": "SG-CENTRAL", "on_hand": 140, "reserved": 12, "restock_eta_days": 5 },
+        { "warehouse": "MY-JB", "on_hand": 60, "reserved": 4, "restock_eta_days": 9 }
+      ]
+    },
+    {
+      "sku": "AM-EAR-1002",
+      "name": "Nimbus Air 2",
+      "brand": "Nimbus",
+      "category": "audio/earbuds",
+      "price_usd": 89.0,
+      "list_price_usd": 99.0,
+      "rating": 4.3,
+      "review_count": 1190,
+      "battery_hours": 28,
+      "features": ["transparency mode", "IPX4", "fast charge"],
+      "description": "Lightweight daily-driver earbuds with strong battery life for the price.",
+      "inventory": [
+        { "warehouse": "SG-CENTRAL", "on_hand": 22, "reserved": 9, "restock_eta_days": 3 },
+        { "warehouse": "US-WEST", "on_hand": 310, "reserved": 20, "restock_eta_days": 2 }
+      ]
+    },
+    {
+      "sku": "AM-EAR-1003",
+      "name": "Kestrel Sport Open",
+      "brand": "Kestrel",
+      "category": "audio/earbuds",
+      "price_usd": 74.5,
+      "list_price_usd": 74.5,
+      "rating": 4.1,
+      "review_count": 640,
+      "battery_hours": 18,
+      "features": ["open-ear", "IPX7", "secure fit hook"],
+      "description": "Open-ear sport buds for running; sweatproof but no noise cancelling.",
+      "inventory": [
+        { "warehouse": "MY-JB", "on_hand": 85, "reserved": 3, "restock_eta_days": 6 }
+      ]
+    },
+    {
+      "sku": "AM-EAR-1004",
+      "name": "Aurora Buds Max",
+      "brand": "Aurora",
+      "category": "audio/earbuds",
+      "price_usd": 179.0,
+      "list_price_usd": 199.0,
+      "rating": 4.8,
+      "review_count": 980,
+      "battery_hours": 38,
+      "features": ["adaptive ANC", "lossless codec", "IPX5", "spatial audio"],
+      "description": "Premium tier earbuds; above a $120 budget but the reference for sound quality.",
+      "inventory": [
+        { "warehouse": "SG-CENTRAL", "on_hand": 8, "reserved": 6, "restock_eta_days": 14 }
+      ]
+    },
+    {
+      "sku": "AM-EAR-1005",
+      "name": "Tidal Mini Buds",
+      "brand": "Tidal",
+      "category": "audio/earbuds",
+      "price_usd": 39.0,
+      "list_price_usd": 49.0,
+      "rating": 3.8,
+      "review_count": 4210,
+      "battery_hours": 20,
+      "features": ["compact case", "IPX4"],
+      "description": "Budget earbuds; acceptable sound, no ANC, plastic build.",
+      "inventory": [
+        { "warehouse": "MY-JB", "on_hand": 500, "reserved": 40, "restock_eta_days": 4 },
+        { "warehouse": "US-WEST", "on_hand": 220, "reserved": 5, "restock_eta_days": 3 }
+      ]
+    },
+    {
+      "sku": "AM-HDP-2001",
+      "name": "Aurora Studio 40",
+      "brand": "Aurora",
+      "category": "audio/headphones",
+      "price_usd": 229.0,
+      "list_price_usd": 259.0,
+      "rating": 4.7,
+      "review_count": 1520,
+      "battery_hours": 60,
+      "features": ["over-ear ANC", "memory foam", "USB-C audio"],
+      "description": "Over-ear ANC headphones for long listening sessions.",
+      "inventory": [
+        { "warehouse": "SG-CENTRAL", "on_hand": 45, "reserved": 5, "restock_eta_days": 7 }
+      ]
+    },
+    {
+      "sku": "AM-HDP-2002",
+      "name": "Nimbus Comfort ANC",
+      "brand": "Nimbus",
+      "category": "audio/headphones",
+      "price_usd": 119.0,
+      "list_price_usd": 149.0,
+      "rating": 4.2,
+      "review_count": 760,
+      "battery_hours": 45,
+      "features": ["over-ear ANC", "foldable", "multipoint pairing"],
+      "description": "Mid-range over-ear ANC that fits a $120 budget.",
+      "inventory": [
+        { "warehouse": "SG-CENTRAL", "on_hand": 0, "reserved": 0, "restock_eta_days": 11 },
+        { "warehouse": "MY-JB", "on_hand": 34, "reserved": 2, "restock_eta_days": 8 }
+      ]
+    },
+    {
+      "sku": "AM-WCH-3001",
+      "name": "Kestrel Pulse 3",
+      "brand": "Kestrel",
+      "category": "wearables/smartwatch",
+      "price_usd": 149.0,
+      "list_price_usd": 179.0,
+      "rating": 4.4,
+      "review_count": 2110,
+      "battery_hours": 168,
+      "features": ["GPS", "SpO2", "7-day battery", "5ATM"],
+      "description": "Fitness-first smartwatch with a week of battery.",
+      "inventory": [
+        { "warehouse": "SG-CENTRAL", "on_hand": 76, "reserved": 11, "restock_eta_days": 6 }
+      ]
+    },
+    {
+      "sku": "AM-WCH-3002",
+      "name": "Tidal Band Lite",
+      "brand": "Tidal",
+      "category": "wearables/fitness-band",
+      "price_usd": 45.0,
+      "list_price_usd": 55.0,
+      "rating": 4.0,
+      "review_count": 5300,
+      "battery_hours": 240,
+      "features": ["heart rate", "sleep tracking", "10-day battery"],
+      "description": "Entry fitness band with very long battery life.",
+      "inventory": [
+        { "warehouse": "MY-JB", "on_hand": 410, "reserved": 25, "restock_eta_days": 5 }
+      ]
+    },
+    {
+      "sku": "AM-SPK-4001",
+      "name": "Nimbus Bloom Speaker",
+      "brand": "Nimbus",
+      "category": "audio/speaker",
+      "price_usd": 99.0,
+      "list_price_usd": 119.0,
+      "rating": 4.5,
+      "review_count": 1340,
+      "battery_hours": 24,
+      "features": ["IP67", "stereo pairing", "USB-C"],
+      "description": "Portable waterproof Bluetooth speaker.",
+      "inventory": [
+        { "warehouse": "SG-CENTRAL", "on_hand": 120, "reserved": 8, "restock_eta_days": 4 },
+        { "warehouse": "US-WEST", "on_hand": 95, "reserved": 3, "restock_eta_days": 3 }
+      ]
+    },
+    {
+      "sku": "AM-PWR-5001",
+      "name": "Aurora PowerCell 20K",
+      "brand": "Aurora",
+      "category": "accessories/power-bank",
+      "price_usd": 59.0,
+      "list_price_usd": 69.0,
+      "rating": 4.6,
+      "review_count": 3020,
+      "battery_hours": 0,
+      "features": ["20000mAh", "65W PD", "dual USB-C"],
+      "description": "Fast-charging power bank that can also charge a laptop.",
+      "inventory": [
+        { "warehouse": "SG-CENTRAL", "on_hand": 260, "reserved": 30, "restock_eta_days": 3 }
+      ]
+    },
+    {
+      "sku": "AM-PWR-5002",
+      "name": "Kestrel Travel Hub 7-in-1",
+      "brand": "Kestrel",
+      "category": "accessories/hub",
+      "price_usd": 34.0,
+      "list_price_usd": 39.0,
+      "rating": 4.2,
+      "review_count": 880,
+      "battery_hours": 0,
+      "features": ["HDMI 4K60", "100W passthrough", "SD reader"],
+      "description": "Compact USB-C travel hub.",
+      "inventory": [
+        { "warehouse": "MY-JB", "on_hand": 150, "reserved": 12, "restock_eta_days": 6 },
+        { "warehouse": "US-WEST", "on_hand": 40, "reserved": 0, "restock_eta_days": 4 }
+      ]
+    }
+  ]
+}
