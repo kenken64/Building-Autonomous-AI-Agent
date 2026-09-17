@@ -22,10 +22,10 @@
       "base_url_env": "OPENROUTER_BASE_URL",
       "api_key_env": "OPENROUTER_API_KEY",
       "model_env": "OPENROUTER_MODEL",
-      "default_model": "moonshotai/kimi-k3",
+      "default_model": "qwen/qwen3.7-flash",
       "fallback_models": [
-        "moonshotai/kimi-k2.6",
-        "moonshotai/kimi-k2-0905"
+        "deepseek/deepseek-v4-flash-0731",
+        "openai/gpt-oss-120b"
       ],
       "temperature": 0.2,
       "max_tokens": 6000,

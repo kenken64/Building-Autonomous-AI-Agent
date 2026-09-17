@@ -131,9 +131,9 @@ python agentmart_ecosystem.py --check-model
 This prints the resolved model settings and makes one real call. Without a key it
 reports `api_key : MISSING` and exits non-zero, so it is a safe first check.
 
-## Configuring the Model (OpenRouter + Kimi K3)
+## Configuring the Model (OpenRouter + Qwen3.7 Flash)
 
-The lab defaults to **Kimi K3** (`moonshotai/kimi-k3`, Moonshot AI) through
+The lab defaults to **Qwen3.7 Flash** (`qwen/qwen3.7-flash`) through
 OpenRouter's OpenAI-compatible API.
 
 ### 1. Get an API key
@@ -146,11 +146,11 @@ OPENROUTER_API_KEY=sk-or-v1-...
 
 ### 2. Set the model
 
-`.env` already ships with the Kimi K3 settings:
+`.env` already ships with these settings:
 
 ```text
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODEL=moonshotai/kimi-k3
+OPENROUTER_MODEL=qwen/qwen3.7-flash
 OPENROUTER_TEMPERATURE=0.2
 OPENROUTER_MAX_TOKENS=6000
 OPENROUTER_REASONING_EFFORT=low
@@ -171,8 +171,8 @@ The config block declares the model as part of the agent's identity:
 ```json
 "model": {
   "provider": "openrouter",
-  "default_model": "moonshotai/kimi-k3",
-  "fallback_models": ["moonshotai/kimi-k2.6", "moonshotai/kimi-k2-0905"],
+  "default_model": "qwen/qwen3.7-flash",
+  "fallback_models": ["deepseek/deepseek-v4-flash-0731", "openai/gpt-oss-120b"],
   "temperature": 0.2,
   "max_tokens": 6000,
   "reasoning_effort": "low"
@@ -182,14 +182,41 @@ The config block declares the model as part of the agent's identity:
 `fallback_models` is passed to OpenRouter as its `models` array, so a request is
 automatically retried down the list if the primary model is unavailable.
 
-### 4. Kimi models on OpenRouter
+### 4. Choosing a model
 
-| Slug | Context | Notes |
-| --- | --- | --- |
-| `moonshotai/kimi-k3` | 1M | Lab default; strongest reasoning |
-| `moonshotai/kimi-k2.6` | 262K | Cheaper fallback |
-| `moonshotai/kimi-k2-0905` | 262K | Cheapest fallback |
-| `moonshotai/kimi-k2-thinking` | 262K | Extended reasoning traces |
+Every model below was tested in **both** roles this lab needs, because passing one
+does not imply passing the other:
+
+- **Hermes tool loop** — does the agent actually *invoke* `a2a_call`, with 25 tool
+  schemas and a large system prompt in context? Several models emit the call as
+  plain text instead, which silently does nothing.
+- **Lab grounding** — do the six agents answer only from the seeded catalog, with
+  no empty replies and no invented SKUs?
+
+| Slug | $/run | vs K3 | Hermes tools | Lab grounding |
+| --- | --- | --- | --- | --- |
+| `qwen/qwen3.7-flash` | $0.0014 | 105x cheaper | yes | yes — **lab default** |
+| `deepseek/deepseek-v4-flash-0731` | $0.0019 | 77x cheaper | yes | yes — fallback, slower |
+| `openai/gpt-oss-120b` | $0.0017 | 86x cheaper | yes | **invented `AM-EAR-1100`** |
+| `qwen/qwen3-30b-a3b-instruct-2507` | $0.0021 | 70x cheaper | **no — printed JSON as text** | yes |
+| `mistralai/mistral-nemo` | $0.0005 | 272x cheaper | **no — "tool not available"** | yes |
+| `moonshotai/kimi-k3` | $0.1470 | — | yes | yes |
+
+`$/run` is one six-agent `product_advice` request at this lab's measured token
+profile (~19K prompt, ~6K completion).
+
+Two lessons worth keeping:
+
+- **A model that passes a one-shot tool probe can still fail a real agent loop.**
+  `qwen3-30b-a3b-instruct` called the tool perfectly in isolation and emitted the
+  same call as message text once Hermes' full prompt was in play.
+- **Cheapest is not safe.** `mistral-nemo` is the cheapest tool-capable option and
+  claimed the tool did not exist; `gpt-oss-120b` grounded fine in isolation and
+  then invented a SKU in the full chain — the exact failure this lab teaches against.
+
+Reasoning models (including the default) share `max_tokens` between reasoning and
+the visible reply, so keep `OPENROUTER_MAX_TOKENS` generous and
+`OPENROUTER_REASONING_EFFORT=low` — otherwise agents return empty strings.
 
 Switch model for a single run without editing any file:
 
@@ -271,7 +298,7 @@ python agentmart_ecosystem.py "Find me wireless earbuds under $120 with good bat
 
 ## Running It From Telegram
 
-A real session against the running system: Telegram -> Hermes/MyShopper (Kimi K3)
+A real session against the running system: Telegram -> Hermes/MyShopper
 -> A2A over HTTP -> the AgentMart graph. The `a2a_call` badges under each reply are
 Hermes invoking the peer. Every SKU, price and stock figure comes from the seeded
 catalog, not from the model's own knowledge.

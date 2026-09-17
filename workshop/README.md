@@ -81,7 +81,9 @@ python seed_data.py
 Hermes/MyShopper is the personal buying agent built into the lab — there is no
 separate package to install. `setup.sh` installs it along with the lab.
 
-The lab is configured for **Kimi K3** (`moonshotai/kimi-k3`) via OpenRouter.
+The lab is configured for **Qwen3.7 Flash** (`qwen/qwen3.7-flash`) via OpenRouter,
+chosen because it runs the whole six-agent chain for about 1/100th the cost of
+Kimi K3 with the same grounded answers.
 Set your key in `.env` (`OPENROUTER_API_KEY`), then verify the connection:
 
 ```bash

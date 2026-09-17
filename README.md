@@ -53,16 +53,16 @@ Running `setup.sh` above installs it. Verify it can reach the model with:
 python agentmart_ecosystem.py --check-model
 ```
 
-### Configure the model (OpenRouter + Kimi K3)
+### Configure the model (OpenRouter + Qwen3.7 Flash)
 
-The lab talks to **Kimi K3** (`moonshotai/kimi-k3`) through OpenRouter's
+The lab talks to **Qwen3.7 Flash** (`qwen/qwen3.7-flash`) through OpenRouter's
 OpenAI-compatible API. Create a key at <https://openrouter.ai/keys> and set it
 in `.env`:
 
 ```text
 OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODEL=moonshotai/kimi-k3
+OPENROUTER_MODEL=qwen/qwen3.7-flash
 OPENROUTER_TEMPERATURE=0.2
 OPENROUTER_MAX_TOKENS=6000
 OPENROUTER_REASONING_EFFORT=low
@@ -71,8 +71,8 @@ OPENROUTER_REASONING_EFFORT=low
 Settings resolve environment first, then the `hermes_agent.model` block in
 `hermes_a2a_config.json`, then built-in defaults — so `.env` overrides the
 config without editing it. The config also declares `fallback_models`
-(`moonshotai/kimi-k2.6`, `moonshotai/kimi-k2-0905`), which OpenRouter retries
-if Kimi K3 is unavailable.
+(`deepseek/deepseek-v4-flash-0731`, `openai/gpt-oss-120b`), which OpenRouter
+retries if the primary model is unavailable.
 
 ### Run the ecosystem
 

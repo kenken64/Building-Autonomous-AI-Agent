@@ -7,7 +7,7 @@ Three layers, each testable on its own. Test them in order — a failure at laye
 will look like a protocol bug at layer 3.
 
 ```
-  Layer 3   Telegram / CLI → Hermes (Kimi K3) ──┐
+  Layer 3   Telegram / CLI → Hermes (Qwen3.7 Flash) ──┐
                                                 │ a2a_call
   Layer 2   A2A v1.0 JSON-RPC over HTTP :9901 ──┤
                                                 │
