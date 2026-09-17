@@ -269,6 +269,61 @@ python agentmart_ecosystem.py "Find me wireless earbuds under $120 with good bat
 5. The Order Agent answers from the order book, or creates a draft order.
 6. On a checkout intent the Payment Agent settles it — simulated (see below).
 
+## Running It From Telegram
+
+A real session against the running system: Telegram -> Hermes/MyShopper (Kimi K3)
+-> A2A over HTTP -> the AgentMart graph. The `a2a_call` badges under each reply are
+Hermes invoking the peer. Every SKU, price and stock figure comes from the seeded
+catalog, not from the model's own knowledge.
+
+Prerequisites: `a2a_server.py` running, the peer registered in `~/.hermes/config.yaml`,
+and the routing rule from `SOUL.md` installed. See `TESTING.md` for the full checklist.
+
+### 1. Shortlist, then buy
+
+![Telegram: AgentMart returns a shortlist of seeded earbuds, then processes a purchase](screenshot/01-telegram-shortlist-and-buy.png)
+
+*"Ask agentmart to find me wireless earbuds under $120 with good battery life."*
+fires `a2a_list` then `a2a_call`, and AgentMart answers with seeded SKUs — Aurora
+Buds Pro (`AM-EAR-1001`, $109, 32h battery) down to Tidal Mini Buds (`AM-EAR-1005`,
+$39), each with real stock counts and delivery options.
+
+This is the check that matters: a reply naming real-world brands means the A2A call
+never happened and the model answered from memory.
+
+### 2. Fulfillment catches a mismatch
+
+![Telegram: Hermes notices the order contains a power bank and travel hub, not the earbuds](screenshot/02-telegram-fulfillment-mismatch.png)
+
+Asked to proceed to fulfillment, Hermes reads back what the order book actually
+contains — `AM-PWR-5001` Aurora PowerCell and `AM-PWR-5002` Kestrel Travel Hub —
+notices that is **not** the `AM-EAR-1002` earbuds that were asked for, stops, and
+asks whether to cancel or correct. It does not quietly proceed.
+
+That behaviour is the `SOUL.md` rule working: relay what AgentMart returned, and
+never paper over a discrepancy with something more plausible.
+
+### 3. Order status
+
+![Telegram: full order status showing payment, fulfillment, ETA and contents](screenshot/03-telegram-order-status.png)
+
+`order_status` routes to the Order Agent alone — no shopping, pricing, inventory
+or fulfillment agent is woken — and returns payment state, simulated auth ref,
+locker pickup, ETA and line items straight from the order book.
+
+### Known issue in these captures
+
+The purchase in capture 1 settled the customer's **pre-existing** order
+`AM-ORD-20260915-0003` (power bank + travel hub, $93.00) instead of drafting a new
+one for `AM-EAR-1002`. The A2A audit log shows Hermes asking correctly — *"create a
+draft order for quantity 1"* — and `classify_intent` routes that text to
+`purchase_intent`, so the misrouting happens further down, inside the Order Agent's
+handling of a customer who already has an unpaid order in the book.
+
+Captures 2 and 3 are the system detecting its own error, which is worth keeping.
+Not yet root-caused. Reset the order book with `python seed_data.py --reset` after
+reproducing.
+
 ## Seeded Order Book
 
 `data/orders.json` seeds three customers, five orders across every lifecycle
