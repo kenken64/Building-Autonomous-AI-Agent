@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import operator
 import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal, TypedDict
+from typing import Annotated, Any, Callable, Literal, TypedDict
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -62,7 +63,9 @@ class AgentMartState(TypedDict, total=False):
     target_order_id: str | None
     hermes_a2a_config: dict[str, Any]
     a2a_task: dict[str, Any]
-    a2a_log: list[dict[str, Any]]
+    # Reducers: the parallel agents all append here in the same superstep, so
+    # LangGraph needs to be told how to merge their writes instead of rejecting them.
+    a2a_log: Annotated[list[dict[str, Any]], operator.add]
     product_listing: str
     order_context: str
     shopping_result: str
@@ -73,7 +76,7 @@ class AgentMartState(TypedDict, total=False):
     payment_result: str
     draft_order: dict[str, Any]
     payment_receipt: dict[str, Any]
-    transcript: list[dict[str, Any]]
+    transcript: Annotated[list[dict[str, Any]], operator.add]
 
 
 @dataclass
@@ -129,6 +132,12 @@ class OpenRouterHermesClient:
         self.fallback_models = config.get("fallback_models", [])
         self.temperature = float(os.getenv("OPENROUTER_TEMPERATURE", config.get("temperature", 0.2)))
         self.max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS", config.get("max_tokens", 1200)))
+        # Kimi K3 reasons before it answers, and reasoning is billed and timed like any
+        # other completion token. Capping the effort is the single biggest latency win;
+        # set OPENROUTER_REASONING_EFFORT=default to hand the model its full budget back.
+        self.reasoning_effort = os.getenv(
+            "OPENROUTER_REASONING_EFFORT", config.get("reasoning_effort", "low")
+        )
         self.http_referer = os.getenv("OPENROUTER_HTTP_REFERER", "http://localhost")
         self.app_title = os.getenv("OPENROUTER_APP_TITLE", "AgentMart Workshop")
 
@@ -143,6 +152,8 @@ class OpenRouterHermesClient:
         if self.fallback_models:
             # OpenRouter retries these in order if the primary model is unavailable.
             extra_body["models"] = [self.model, *self.fallback_models]
+        if self.reasoning_effort and self.reasoning_effort != "default":
+            extra_body["reasoning"] = {"effort": self.reasoning_effort}
 
         response = client.chat.completions.create(
             extra_headers={
@@ -279,7 +290,8 @@ def emit_envelope(
     payload: dict[str, Any],
     lifecycle: str = "in_progress",
 ) -> dict[str, Any]:
-    """Append one A2A hop to the replayable log and return the envelope."""
+    """Build one A2A hop. Pure: parallel branches share a state snapshot, so the
+    caller collects the returned envelopes and hands them back as an ``a2a_log`` delta."""
     task = state.get("a2a_task") or {}
     envelope = A2AEnvelope(
         task_id=str(uuid4()),
@@ -291,7 +303,6 @@ def emit_envelope(
         state=lifecycle,
         protocol=task.get("protocol", "agentmart.a2a.v1"),
     ).to_dict()
-    state.setdefault("a2a_log", []).append(envelope)
     return envelope
 
 
@@ -307,21 +318,14 @@ def model_config_from_state(state: AgentMartState) -> dict[str, Any]:
     return config.get("hermes_agent", {}).get("model", {})
 
 
-def append_transcript(
-    state: AgentMartState,
+def transcript_entry(
     agent: AgentName,
     message: str,
     envelope: dict[str, Any] | None = None,
-) -> AgentMartState:
-    transcript = list(state.get("transcript", []))
-    transcript.append(
-        {
-            "agent": agent,
-            "message": message,
-            "a2a": envelope,
-        }
-    )
-    return {**state, "transcript": transcript}
+) -> dict[str, Any]:
+    """One transcript row. Nodes return ``{"transcript": [entry]}`` and the reducer
+    concatenates -- returning the whole list would double it under a reducer."""
+    return {"agent": agent, "message": message, "a2a": envelope}
 
 
 def make_agent_node(
@@ -345,7 +349,7 @@ def make_agent_node(
             model_config=model_config_from_state(state),
         )
         result = client.complete(agent, system_prompt, prompt_builder(state))
-        emit_envelope(
+        done = emit_envelope(
             state,
             sender=agent,
             recipient="hermes_myshopper",
@@ -353,9 +357,11 @@ def make_agent_node(
             payload={"result_chars": len(result)},
             lifecycle="completed",
         )
-        next_state = append_transcript(state, agent, result, envelope)
-        next_state[output_key] = result
-        return next_state
+        return {
+            "transcript": [transcript_entry(agent, result, envelope)],
+            "a2a_log": [envelope, done],
+            output_key: result,
+        }
 
     return node
 
@@ -409,13 +415,15 @@ def hermes_myshopper_node(state: AgentMartState) -> AgentMartState:
         json.dumps(envelope, indent=2),
     )
 
-    next_state = append_transcript(state, "hermes_myshopper", message, envelope)
-    next_state["a2a_task"] = envelope
-    next_state["a2a_log"] = [*state.get("a2a_log", []), envelope]
-    next_state["intent"] = intent
-    next_state["customer_id"] = customer_id
-    next_state["target_sku"] = envelope["payload"]["target_sku"]
-    next_state["target_order_id"] = envelope["payload"]["target_order_id"]
+    next_state: AgentMartState = {
+        "transcript": [transcript_entry("hermes_myshopper", message, envelope)],
+        "a2a_log": [envelope],
+        "a2a_task": envelope,
+        "intent": intent,
+        "customer_id": customer_id,
+        "target_sku": envelope["payload"]["target_sku"],
+        "target_order_id": envelope["payload"]["target_order_id"],
+    }
     # Order and Payment agents read the customer's real order book.
     if intent in ("order_status", "checkout_payment", "purchase_intent"):
         next_state["order_context"] = load_order_context(
@@ -636,7 +644,7 @@ def order_agent_node(state: AgentMartState) -> AgentMartState:
     )
     result = client.complete("order_agent", ORDER_AGENT_SYSTEM_PROMPT, _order_agent_prompt(next_state))
 
-    emit_envelope(
+    done = emit_envelope(
         next_state,
         sender="order_agent",
         recipient="hermes_myshopper",
@@ -648,9 +656,15 @@ def order_agent_node(state: AgentMartState) -> AgentMartState:
         lifecycle="completed",
     )
 
-    next_state = append_transcript(next_state, "order_agent", result, envelope)
-    next_state["order_result"] = result
-    return next_state
+    # Only the keys this node actually decided; transcript/a2a_log go back as deltas.
+    delta: AgentMartState = {
+        k: v for k, v in next_state.items()
+        if k in ("draft_order", "target_order_id", "order_context")
+    }
+    delta["transcript"] = [transcript_entry("order_agent", result, envelope)]
+    delta["a2a_log"] = [envelope, done]
+    delta["order_result"] = result
+    return delta
 
 
 PAYMENT_AGENT_SYSTEM_PROMPT = (
@@ -706,7 +720,7 @@ def payment_agent_node(state: AgentMartState) -> AgentMartState:
         json.dumps({"a2a_task": state["a2a_task"], "receipt": receipt}, indent=2),
     )
 
-    emit_envelope(
+    done = emit_envelope(
         next_state,
         sender="payment_agent",
         recipient="hermes_myshopper",
@@ -715,9 +729,12 @@ def payment_agent_node(state: AgentMartState) -> AgentMartState:
         lifecycle="failed" if "error" in receipt else "completed",
     )
 
-    next_state = append_transcript(next_state, "payment_agent", result, envelope)
-    next_state["payment_result"] = result
-    return next_state
+    return {
+        "transcript": [transcript_entry("payment_agent", result, envelope)],
+        "a2a_log": [envelope, done],
+        "payment_receipt": receipt,
+        "payment_result": result,
+    }
 
 
 # Which AgentMart agents each intent actually visits. Routing on capability is
@@ -739,20 +756,48 @@ INTENT_PATHS: dict[str, tuple[str, ...]] = {
 }
 
 
-def route_from_hermes(state: AgentMartState) -> str:
-    """First AgentMart hop for this intent."""
-    return INTENT_PATHS[state.get("intent", "product_advice")][0]
+# Pricing, Inventory and Fulfillment all read the Shopping Agent's shortlist and
+# none reads another's output, so running them in sequence only bought latency.
+# They now share one superstep and the Order Agent joins on all of them.
+PARALLEL_AGENTS = frozenset({"pricing_agent", "inventory_agent", "fulfillment_agent"})
 
 
-def _next_after(node: str) -> Callable[[AgentMartState], str]:
-    """Follow this intent's path; fall off to END when the node is its last hop."""
+def _stages(intent: str) -> list[str | list[str]]:
+    """The intent's path, with consecutive independent agents grouped into one stage.
 
-    def router(state: AgentMartState) -> str:
-        path = INTENT_PATHS[state.get("intent", "product_advice")]
-        if node not in path:
-            return END
-        index = path.index(node)
-        return path[index + 1] if index + 1 < len(path) else END
+    product_advice becomes:
+        shopping_agent -> [pricing, inventory, fulfillment] -> order_agent
+    """
+    stages: list[str | list[str]] = []
+    for agent in INTENT_PATHS[intent]:
+        if agent in PARALLEL_AGENTS and stages and isinstance(stages[-1], list):
+            stages[-1].append(agent)
+        elif agent in PARALLEL_AGENTS:
+            stages.append([agent])
+        else:
+            stages.append(agent)
+    return stages
+
+
+def route_from_hermes(state: AgentMartState) -> str | list[str]:
+    """First AgentMart stage for this intent. A list fans out in one superstep."""
+    return _stages(state.get("intent", "product_advice"))[0]
+
+
+def _next_after(node: str) -> Callable[[AgentMartState], str | list[str]]:
+    """Follow this intent's stages; fall off to END when the stage is the last one.
+
+    Every member of a parallel stage returns the same next stage, which is what makes
+    the Order Agent a join: LangGraph runs it once, after the whole stage completes.
+    """
+
+    def router(state: AgentMartState) -> str | list[str]:
+        stages = _stages(state.get("intent", "product_advice"))
+        for index, stage in enumerate(stages):
+            members = stage if isinstance(stage, list) else [stage]
+            if node in members:
+                return stages[index + 1] if index + 1 < len(stages) else END
+        return END
 
     return router
 
@@ -791,6 +836,31 @@ def build_graph():
     return graph.compile()
 
 
+def _hop_agent(hop: dict[str, Any]) -> str:
+    """The AgentMart agent a hop concerns, whichever side of the exchange it sits on."""
+    return hop["recipient"] if hop["sender"] == "hermes_myshopper" else hop["sender"]
+
+
+def normalize_ordering(result: AgentMartState) -> AgentMartState:
+    """Re-sort the parallel stage's rows back into the intent's declared path order.
+
+    A superstep finishes in whatever order the network returns, which would make the
+    transcript non-deterministic. Sorting by the intent path keeps the replay stable
+    and the A2A log readable; the sort is stable, so each agent's accepted/completed
+    pair keeps its relative order. The work still happened concurrently.
+    """
+    order = ["hermes_myshopper", *INTENT_PATHS[result.get("intent", "product_advice")]]
+    rank = {name: index for index, name in enumerate(order)}
+    result["transcript"] = sorted(
+        result.get("transcript", []), key=lambda e: rank.get(e["agent"], len(rank))
+    )
+    # The opening handoff is addressed to 'agentmart' itself, so it sorts ahead of everything.
+    result["a2a_log"] = sorted(
+        result.get("a2a_log", []), key=lambda h: rank.get(_hop_agent(h), -1)
+    )
+    return result
+
+
 def run_agentmart(
     customer_request: str,
     channel: str = "webchat",
@@ -802,7 +872,7 @@ def run_agentmart(
     intent: Intent | None = None,
 ) -> AgentMartState:
     app = build_graph()
-    return app.invoke(
+    return normalize_ordering(app.invoke(
         {
             "customer_request": customer_request,
             "channel": channel,
@@ -814,7 +884,7 @@ def run_agentmart(
             "transcript": [],
             "a2a_log": [],
         }
-    )
+    ))
 
 
 def check_model_connection(config_path: str | None = None) -> int:

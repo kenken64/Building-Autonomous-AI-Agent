@@ -64,7 +64,8 @@ OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_MODEL=moonshotai/kimi-k3
 OPENROUTER_TEMPERATURE=0.2
-OPENROUTER_MAX_TOKENS=1200
+OPENROUTER_MAX_TOKENS=6000
+OPENROUTER_REASONING_EFFORT=low
 ```
 
 Settings resolve environment first, then the `hermes_agent.model` block in

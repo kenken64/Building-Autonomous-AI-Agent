@@ -28,7 +28,8 @@
         "moonshotai/kimi-k2-0905"
       ],
       "temperature": 0.2,
-      "max_tokens": 1200
+      "max_tokens": 6000,
+      "reasoning_effort": "low"
     }
   },
   "a2a_connection": {

@@ -152,7 +152,8 @@ OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_MODEL=moonshotai/kimi-k3
 OPENROUTER_TEMPERATURE=0.2
-OPENROUTER_MAX_TOKENS=1200
+OPENROUTER_MAX_TOKENS=6000
+OPENROUTER_REASONING_EFFORT=low
 ```
 
 ### 3. How settings resolve
@@ -173,7 +174,8 @@ The config block declares the model as part of the agent's identity:
   "default_model": "moonshotai/kimi-k3",
   "fallback_models": ["moonshotai/kimi-k2.6", "moonshotai/kimi-k2-0905"],
   "temperature": 0.2,
-  "max_tokens": 1200
+  "max_tokens": 6000,
+  "reasoning_effort": "low"
 }
 ```
 
