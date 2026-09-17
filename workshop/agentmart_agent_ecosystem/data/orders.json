@@ -1,0 +1,170 @@
+{
+  "orders_version": "1.0.0",
+  "currency": "USD",
+  "as_of": "2026-09-17",
+  "_note": "Illustrative workshop data. Payments here are simulated: no payment processor is ever contacted.",
+  "customers": [
+    {
+      "customer_id": "CUST-1001",
+      "name": "Wei Ling Tan",
+      "channel_handle": "@weiling",
+      "channel": "telegram",
+      "region": "SG",
+      "default_payment_method": "PM-VISA-4417",
+      "shipping_address": "Blk 118 Bishan Street 12, #07-221, Singapore 570118"
+    },
+    {
+      "customer_id": "CUST-1002",
+      "name": "Arun Prakash",
+      "channel_handle": "+6591230000",
+      "channel": "whatsapp",
+      "region": "SG",
+      "default_payment_method": "PM-PAYNOW-7781",
+      "shipping_address": "24 Jalan Kayu, Singapore 799435"
+    },
+    {
+      "customer_id": "CUST-1003",
+      "name": "Mei Chen",
+      "channel_handle": "webchat-session-4471",
+      "channel": "webchat",
+      "region": "MY",
+      "default_payment_method": "PM-VISA-9002",
+      "shipping_address": "12 Jalan Molek 1/5, Johor Bahru 80100"
+    }
+  ],
+  "payment_methods": [
+    { "method_id": "PM-VISA-4417", "customer_id": "CUST-1001", "type": "card", "brand": "Visa", "last4": "4417", "label": "Visa ending 4417" },
+    { "method_id": "PM-PAYNOW-7781", "customer_id": "CUST-1002", "type": "paynow", "brand": "PayNow", "last4": "7781", "label": "PayNow ending 7781" },
+    { "method_id": "PM-VISA-9002", "customer_id": "CUST-1003", "type": "card", "brand": "Visa", "last4": "9002", "label": "Visa ending 9002" }
+  ],
+  "orders": [
+    {
+      "order_id": "AM-ORD-20260901-0001",
+      "customer_id": "CUST-1001",
+      "status": "delivered",
+      "placed_at": "2026-09-01T10:14:00+08:00",
+      "updated_at": "2026-09-05T16:40:00+08:00",
+      "warehouse": "SG-CENTRAL",
+      "fulfillment_method": "standard_delivery",
+      "tracking_ref": "SGX4417900123",
+      "eta_date": "2026-09-05",
+      "subtotal_usd": 109.0,
+      "shipping_usd": 3.5,
+      "total_usd": 112.5,
+      "items": [
+        { "sku": "AM-EAR-1001", "quantity": 1, "unit_price_usd": 109.0 }
+      ]
+    },
+    {
+      "order_id": "AM-ORD-20260912-0002",
+      "customer_id": "CUST-1001",
+      "status": "in_transit",
+      "placed_at": "2026-09-12T09:02:00+08:00",
+      "updated_at": "2026-09-16T08:15:00+08:00",
+      "warehouse": "SG-CENTRAL",
+      "fulfillment_method": "same_day_courier",
+      "tracking_ref": "SGX4417900456",
+      "eta_date": "2026-09-18",
+      "subtotal_usd": 149.0,
+      "shipping_usd": 9.0,
+      "total_usd": 158.0,
+      "items": [
+        { "sku": "AM-WCH-3001", "quantity": 1, "unit_price_usd": 149.0 }
+      ]
+    },
+    {
+      "order_id": "AM-ORD-20260915-0003",
+      "customer_id": "CUST-1001",
+      "status": "awaiting_payment",
+      "placed_at": "2026-09-15T21:33:00+08:00",
+      "updated_at": "2026-09-15T21:33:00+08:00",
+      "warehouse": "SG-CENTRAL",
+      "fulfillment_method": "locker_pickup",
+      "tracking_ref": null,
+      "eta_date": "2026-09-19",
+      "subtotal_usd": 93.0,
+      "shipping_usd": 0.0,
+      "total_usd": 93.0,
+      "items": [
+        { "sku": "AM-PWR-5001", "quantity": 1, "unit_price_usd": 59.0 },
+        { "sku": "AM-PWR-5002", "quantity": 1, "unit_price_usd": 34.0 }
+      ]
+    },
+    {
+      "order_id": "AM-ORD-20260914-0004",
+      "customer_id": "CUST-1002",
+      "status": "packed",
+      "placed_at": "2026-09-14T13:20:00+08:00",
+      "updated_at": "2026-09-16T11:05:00+08:00",
+      "warehouse": "SG-CENTRAL",
+      "fulfillment_method": "standard_delivery",
+      "tracking_ref": "SGX7781220987",
+      "eta_date": "2026-09-19",
+      "subtotal_usd": 119.0,
+      "shipping_usd": 3.5,
+      "total_usd": 122.5,
+      "items": [
+        { "sku": "AM-HDP-2002", "quantity": 1, "unit_price_usd": 119.0 }
+      ]
+    },
+    {
+      "order_id": "AM-ORD-20260908-0005",
+      "customer_id": "CUST-1003",
+      "status": "cancelled",
+      "placed_at": "2026-09-08T18:47:00+08:00",
+      "updated_at": "2026-09-09T10:02:00+08:00",
+      "warehouse": "MY-JB",
+      "fulfillment_method": "economy_delivery",
+      "tracking_ref": null,
+      "eta_date": null,
+      "subtotal_usd": 39.0,
+      "shipping_usd": 1.5,
+      "total_usd": 40.5,
+      "items": [
+        { "sku": "AM-EAR-1005", "quantity": 1, "unit_price_usd": 39.0 }
+      ]
+    }
+  ],
+  "payments": [
+    {
+      "payment_id": "PAY-20260901-0001",
+      "order_id": "AM-ORD-20260901-0001",
+      "method_id": "PM-VISA-4417",
+      "status": "captured",
+      "amount_usd": 112.5,
+      "authorized_at": "2026-09-01T10:14:20+08:00",
+      "captured_at": "2026-09-01T10:14:25+08:00",
+      "processor_ref": "sim_auth_9f3a1c"
+    },
+    {
+      "payment_id": "PAY-20260912-0002",
+      "order_id": "AM-ORD-20260912-0002",
+      "method_id": "PM-VISA-4417",
+      "status": "captured",
+      "amount_usd": 158.0,
+      "authorized_at": "2026-09-12T09:02:11+08:00",
+      "captured_at": "2026-09-12T09:02:14+08:00",
+      "processor_ref": "sim_auth_2b77de"
+    },
+    {
+      "payment_id": "PAY-20260914-0004",
+      "order_id": "AM-ORD-20260914-0004",
+      "method_id": "PM-PAYNOW-7781",
+      "status": "captured",
+      "amount_usd": 122.5,
+      "authorized_at": "2026-09-14T13:20:09+08:00",
+      "captured_at": "2026-09-14T13:20:30+08:00",
+      "processor_ref": "sim_auth_55c018"
+    },
+    {
+      "payment_id": "PAY-20260908-0005",
+      "order_id": "AM-ORD-20260908-0005",
+      "method_id": "PM-VISA-9002",
+      "status": "refunded",
+      "amount_usd": 40.5,
+      "authorized_at": "2026-09-08T18:47:06+08:00",
+      "captured_at": "2026-09-08T18:47:09+08:00",
+      "processor_ref": "sim_auth_ae4419"
+    }
+  ]
+}

@@ -15,7 +15,7 @@ flowchart TD
     Customer[Customer]
     Channel[Telegram / WhatsApp / WebChat]
     Hermes[Hermes AI Agent<br/>MyShopper]
-    A2A[A2A Envelope]
+    Router{Intent router}
 
     subgraph AgentMart[AgentMart Agent Ecosystem]
         Shopping[Shopping Agent]
@@ -23,17 +23,38 @@ flowchart TD
         Inventory[Inventory Agent]
         Fulfillment[Fulfillment Agent]
         Order[Order Agent]
+        Payment[Payment Agent<br/>simulated]
     end
 
     Customer --> Channel
     Channel --> Hermes
-    Hermes --> A2A
-    A2A --> Shopping
+    Hermes -->|A2A envelope| Router
+    Router -->|browse / advice| Shopping
+    Router -->|purchase| Inventory
+    Router -->|order status| Order
+    Router -->|checkout| Order
     Shopping --> Pricing
     Pricing --> Inventory
     Inventory --> Fulfillment
     Fulfillment --> Order
+    Order -->|checkout only| Payment
 ```
+
+Hermes classifies the customer message, then only the agents that intent needs
+are woken. A status question does not wake the whole ecosystem.
+
+| Customer intent | Example message | Agents woken |
+| --- | --- | --- |
+| `order_status` | "What is my order status?" | Order |
+| `browse_catalog` | "List me the available products." | Shopping, Pricing, Inventory, Order |
+| `product_advice` | "Find me wireless earbuds under $120." | Shopping, Pricing, Inventory, Fulfillment, Order |
+| `purchase_intent` | "I want to buy this AM-EAR-1002." | Inventory, Fulfillment, Order |
+| `checkout_payment` | "Checkout and pay for my order." | Order, Payment |
+
+Routing is rule-based rather than model-driven, so a scenario run is
+reproducible and the assertions in `test_scenarios.py` mean something. The
+routing table lives in `INTENT_PATHS` (`agentmart_ecosystem.py`) and is mirrored
+in `hermes_a2a_config.json` under `intent_routing`.
 
 ## Files
 
@@ -43,7 +64,10 @@ flowchart TD
 | `hermes_a2a_config.json` | Hermes agent configuration for the A2A connection into AgentMart. |
 | `seed_data.py` | Seeds the product listing from `data/products.json` into SQLite. |
 | `catalog.py` | Query helpers the agents use to read the seeded listing. |
+| `orders.py` | Read/write helpers over the order book: orders, payments, draft orders. |
+| `test_scenarios.py` | End-to-end scenario suite for the Hermes + A2A flows. |
 | `data/products.json` | Source product catalog: products, stock, warehouses, delivery options. |
+| `data/orders.json` | Source order book: customers, orders, payment methods, payments. |
 | `data/agentmart.db` | Generated SQLite database (git-ignored; created by `seed_data.py`). |
 | `requirements.txt` | Python dependencies for the lab. |
 | `.env.example` | Environment variable template for OpenRouter. |
@@ -235,9 +259,71 @@ python agentmart_ecosystem.py "Find me wireless earbuds under $120 with good bat
 ## Flow
 
 1. Hermes/MyShopper receives the customer request from a chat channel.
-2. Hermes creates an A2A task envelope addressed to the AgentMart ecosystem.
-3. The Shopping Agent picks candidate SKUs from the seeded product listing.
-4. The Pricing Agent evaluates price and value against the listed prices.
-5. The Inventory Agent checks availability from the seeded stock levels.
-6. The Fulfillment Agent picks a delivery path from the seeded options.
-7. The Order Agent produces a final customer-ready recommendation.
+2. Hermes classifies the intent and creates an A2A task envelope addressed to the
+   AgentMart ecosystem. Every later hop reuses that envelope's `correlation_id`.
+3. The router wakes only the agents that intent needs (see the table above).
+4. Each agent hop appends its own envelope to `a2a_log`, moving through the
+   `proposed -> accepted -> in_progress -> completed` lifecycle from Part 7.
+5. The Order Agent answers from the order book, or creates a draft order.
+6. On a checkout intent the Payment Agent settles it — simulated (see below).
+
+## Seeded Order Book
+
+`data/orders.json` seeds three customers, five orders across every lifecycle
+state, their payment methods, and their payment history. This is what makes
+"what is my order status" and "checkout and pay" resolve against real rows.
+
+```bash
+python seed_data.py --list-orders    # print the seeded order book
+```
+
+| Customer | Channel | Orders |
+| --- | --- | --- |
+| `CUST-1001` Wei Ling Tan | Telegram | delivered, in_transit, **awaiting_payment** |
+| `CUST-1002` Arun Prakash | WhatsApp | packed |
+| `CUST-1003` Mei Chen | WebChat | cancelled (refunded) |
+
+`CUST-1001` is the default customer, and its `awaiting_payment` order is what a
+bare "checkout and pay" settles. Override with `--customer`.
+
+### Payments are simulated
+
+The Payment Agent writes `authorized` then `captured` rows into the local SQLite
+database and generates a `sim_auth_...` reference. **No payment processor is ever
+contacted, no card number is stored, and no money moves.** The agent is
+instructed to say so in its reply.
+
+## Scenario Suite
+
+`test_scenarios.py` sends one customer message per scenario through the real
+LangGraph workflow, then asserts on what actually happened: the intent chosen,
+the agents woken, the A2A envelope chain, and the resulting rows in the order
+book.
+
+```bash
+python test_scenarios.py                  # all scenarios, dry-run
+python test_scenarios.py --list           # list scenario names
+python test_scenarios.py -s buy-this      # run one
+python test_scenarios.py --verbose        # show the A2A hops and agent replies
+python test_scenarios.py --live           # call OpenRouter for real
+```
+
+| Scenario | Message | What it proves |
+| --- | --- | --- |
+| `order-status` | "What is my order status?" | Only the Order Agent wakes; the real order book is read |
+| `order-status-specific` | "Where is my order AM-ORD-...?" | An order id scopes the lookup to that one order |
+| `order-status-unknown` | "Where is my order AM-ORD-9999-9999?" | A missing order degrades gracefully, no crash |
+| `list-products` | "List me the available products." | Browsing skips the Fulfillment Agent; real SKUs reach the prompts |
+| `buy-this` | "I want to buy this AM-EAR-1002." | A real draft order is created and stops at `awaiting_payment` |
+| `checkout-and-pay` | "Checkout and pay for my order." | The unpaid order is settled; a simulated receipt is written |
+| `product-advice` | "Find me wireless earbuds under $120." | The original full five-agent pipeline still runs |
+| `buy-then-checkout` | purchase, then settle that order | Two turns on one order id = two distinct A2A tasks |
+
+Dry-run is the default, so the whole suite passes with **no OpenRouter key**:
+everything asserted is the deterministic part of the system — routing, the A2A
+envelope chain, and order/payment state. `--live` sends the same scenarios
+through the model as well.
+
+The suite re-seeds the order book before each scenario and again at the end, so
+runs are isolated and the lab is left in its seeded state. Pass `--no-reseed` to
+inspect what a run left behind.

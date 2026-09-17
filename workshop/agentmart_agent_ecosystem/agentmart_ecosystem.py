@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,18 @@ from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 
 from catalog import CatalogNotSeededError, format_product_listing, query_products
+from orders import (
+    OrderBookNotSeededError,
+    OrderNotFoundError,
+    checkout_and_pay,
+    create_draft_order,
+    find_payable_order,
+    format_order,
+    format_orders,
+    get_customer,
+    get_order,
+    list_orders,
+)
 
 
 AgentName = Literal[
@@ -22,31 +35,63 @@ AgentName = Literal[
     "inventory_agent",
     "fulfillment_agent",
     "order_agent",
+    "payment_agent",
 ]
+
+# What the customer actually wants. The router is deterministic on purpose:
+# the teaching point in Part 7 is capability + heartbeat routing, not intent
+# classification, and reproducible routing keeps the scenario suite assertable.
+Intent = Literal[
+    "browse_catalog",
+    "product_advice",
+    "purchase_intent",
+    "checkout_payment",
+    "order_status",
+]
+
+DEFAULT_CUSTOMER_ID = "CUST-1001"
 
 
 class AgentMartState(TypedDict, total=False):
     customer_request: str
     channel: str
     dry_run: bool
+    customer_id: str
+    intent: Intent
+    target_sku: str | None
+    target_order_id: str | None
     hermes_a2a_config: dict[str, Any]
     a2a_task: dict[str, Any]
+    a2a_log: list[dict[str, Any]]
     product_listing: str
+    order_context: str
     shopping_result: str
     pricing_result: str
     inventory_result: str
     fulfillment_result: str
     order_result: str
+    payment_result: str
+    draft_order: dict[str, Any]
+    payment_receipt: dict[str, Any]
     transcript: list[dict[str, Any]]
 
 
 @dataclass
 class A2AEnvelope:
+    """One hop on the A2A stream.
+
+    `correlation_id` ties every hop of a single customer request together, and
+    `state` mirrors the task lifecycle from Part 7 of the lecture, so a consumer
+    can rebuild the whole conversation by replaying the log.
+    """
+
     task_id: str
     sender: AgentName
     recipient: str
     intent: str
     payload: dict[str, Any]
+    correlation_id: str = ""
+    state: str = "proposed"
     protocol: str = "agentmart.a2a.v1"
     created_at: str = ""
 
@@ -54,7 +99,12 @@ class A2AEnvelope:
         data = asdict(self)
         if not data["created_at"]:
             data["created_at"] = datetime.now(timezone.utc).isoformat()
+        if not data["correlation_id"]:
+            data["correlation_id"] = data["task_id"]
         return data
+
+
+A2A_LIFECYCLE = ("proposed", "accepted", "in_progress", "completed", "failed")
 
 
 DEFAULT_MODEL = "moonshotai/kimi-k3"
@@ -131,6 +181,120 @@ def load_product_listing(
     return format_product_listing(products)
 
 
+SKU_PATTERN = re.compile(r"\bAM-[A-Z]{3}-\d{4}\b", re.IGNORECASE)
+ORDER_ID_PATTERN = re.compile(r"\bAM-ORD-[\w-]+\b", re.IGNORECASE)
+
+# Checked in order: the first rule that matches wins. Order matters here —
+# "checkout and pay for my order" contains "my order", so the explicit checkout
+# imperative has to outrank the status rule, while a *question* about payment
+# ("has my payment gone through?") must stay a status lookup and never charge.
+INTENT_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        # 1. Unambiguous checkout imperatives.
+        "checkout_payment",
+        re.compile(
+            r"check\s?out\b|\bpay\s+now\b|place\s+the\s+order|settle\s+(up|the\s+bill)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        # 2. Status questions, including questions *about* a payment.
+        "order_status",
+        re.compile(
+            r"order\s+status|status\s+of\s+(my|the|order)|where\s+is\s+my|"
+            r"track(ing)?\b|my\s+orders?\b|delivery\s+status|has\s+it\s+shipped|"
+            r"payment\s+.*(gone\s+through|received|cleared|succeed)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        # 3. Weaker payment wording, only once a status reading is ruled out.
+        "checkout_payment",
+        re.compile(r"\bpay\b|\bpaying\b|payment", re.IGNORECASE),
+    ),
+    (
+        "purchase_intent",
+        re.compile(r"\bbuy\b|purchase|add\s+to\s+(the\s+)?cart|i.?ll\s+take|take\s+(it|this)|order\s+(this|the)", re.IGNORECASE),
+    ),
+    (
+        "browse_catalog",
+        re.compile(
+            r"list\s+(me|the|all|available)|show\s+me|what\s+(do\s+you\s+have|is\s+available|"
+            r"products?\s+are)|browse|catalog(ue)?|available\s+product",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def classify_intent(customer_request: str) -> Intent:
+    """Deterministic intent routing.
+
+    Kept rule-based so a scenario run is reproducible and the assertions in
+    `test_scenarios.py` mean something: the agents are the model-driven part,
+    the routing is not.
+    """
+    for intent, pattern in INTENT_RULES:
+        if pattern.search(customer_request):
+            return intent  # type: ignore[return-value]
+    return "product_advice"
+
+
+def extract_sku(customer_request: str) -> str | None:
+    match = SKU_PATTERN.search(customer_request)
+    return match.group(0).upper() if match else None
+
+
+def extract_order_id(customer_request: str) -> str | None:
+    match = ORDER_ID_PATTERN.search(customer_request)
+    return match.group(0).upper() if match else None
+
+
+def load_order_context(customer_id: str, order_id: str | None = None) -> str:
+    """Render the customer's order book for the Order and Payment agent prompts."""
+    try:
+        if order_id:
+            return format_order(get_order(order_id))
+        customer = get_customer(customer_id)
+        header = (
+            f"customer {customer['customer_id']} | {customer['name']}"
+            f" | {customer['channel']} {customer['channel_handle']}"
+            f" | ships to {customer['shipping_address']}"
+            f" | default payment {customer['default_payment_method']}"
+            if customer
+            else f"(no customer record for {customer_id})"
+        )
+        return header + "\n" + format_orders(list_orders(customer_id=customer_id))
+    except OrderNotFoundError as exc:
+        return f"(order not found: {exc})"
+    except OrderBookNotSeededError as exc:
+        return f"(order book unavailable: {exc})"
+
+
+def emit_envelope(
+    state: AgentMartState,
+    sender: AgentName,
+    recipient: str,
+    intent: str,
+    payload: dict[str, Any],
+    lifecycle: str = "in_progress",
+) -> dict[str, Any]:
+    """Append one A2A hop to the replayable log and return the envelope."""
+    task = state.get("a2a_task") or {}
+    envelope = A2AEnvelope(
+        task_id=str(uuid4()),
+        sender=sender,
+        recipient=recipient,
+        intent=intent,
+        payload=payload,
+        correlation_id=task.get("correlation_id") or task.get("task_id") or str(uuid4()),
+        state=lifecycle,
+        protocol=task.get("protocol", "agentmart.a2a.v1"),
+    ).to_dict()
+    state.setdefault("a2a_log", []).append(envelope)
+    return envelope
+
+
 def load_hermes_a2a_config(config_path: str | None = None) -> dict[str, Any]:
     path = Path(config_path) if config_path else Path(__file__).with_name("hermes_a2a_config.json")
     with path.open("r", encoding="utf-8") as handle:
@@ -165,14 +329,31 @@ def make_agent_node(
     system_prompt: str,
     prompt_builder: Callable[[AgentMartState], str],
     output_key: str,
+    capability: str = "",
 ) -> Callable[[AgentMartState], AgentMartState]:
     def node(state: AgentMartState) -> AgentMartState:
+        envelope = emit_envelope(
+            state,
+            sender="hermes_myshopper",
+            recipient=agent,
+            intent=capability or output_key,
+            payload={"intent": state.get("intent"), "capability": capability or output_key},
+            lifecycle="accepted",
+        )
         client = OpenRouterHermesClient(
             dry_run=state.get("dry_run", False),
             model_config=model_config_from_state(state),
         )
         result = client.complete(agent, system_prompt, prompt_builder(state))
-        next_state = append_transcript(state, agent, result)
+        emit_envelope(
+            state,
+            sender=agent,
+            recipient="hermes_myshopper",
+            intent=capability or output_key,
+            payload={"result_chars": len(result)},
+            lifecycle="completed",
+        )
+        next_state = append_transcript(state, agent, result, envelope)
         next_state[output_key] = result
         return next_state
 
@@ -186,14 +367,23 @@ def hermes_myshopper_node(state: AgentMartState) -> AgentMartState:
     a2a_config = config["a2a_connection"]
     agentmart_config = config["agentmart"]
 
+    intent = state.get("intent") or classify_intent(customer_request)
+    customer_id = state.get("customer_id") or DEFAULT_CUSTOMER_ID
+    task_id = str(uuid4())
+
     envelope = A2AEnvelope(
-        task_id=str(uuid4()),
+        task_id=task_id,
+        correlation_id=task_id,
+        state="proposed",
         sender=hermes_config["id"],
         recipient=agentmart_config["id"],
-        intent="personal_buying_request",
+        intent=intent,
         payload={
             "customer_request": customer_request,
+            "customer_id": customer_id,
             "channel": state.get("channel", "webchat"),
+            "target_sku": state.get("target_sku") or extract_sku(customer_request),
+            "target_order_id": state.get("target_order_id") or extract_order_id(customer_request),
             "hermes_agent": hermes_config,
             "a2a_connection": a2a_config,
             "target_agents": agentmart_config["agents"],
@@ -221,6 +411,16 @@ def hermes_myshopper_node(state: AgentMartState) -> AgentMartState:
 
     next_state = append_transcript(state, "hermes_myshopper", message, envelope)
     next_state["a2a_task"] = envelope
+    next_state["a2a_log"] = [*state.get("a2a_log", []), envelope]
+    next_state["intent"] = intent
+    next_state["customer_id"] = customer_id
+    next_state["target_sku"] = envelope["payload"]["target_sku"]
+    next_state["target_order_id"] = envelope["payload"]["target_order_id"]
+    # Order and Payment agents read the customer's real order book.
+    if intent in ("order_status", "checkout_payment", "purchase_intent"):
+        next_state["order_context"] = load_order_context(
+            customer_id, envelope["payload"]["target_order_id"]
+        )
     return next_state
 
 
@@ -242,6 +442,7 @@ shopping_agent_node = make_agent_node(
         indent=2,
     ),
     "shopping_result",
+    capability="product_search",
 )
 
 
@@ -251,7 +452,7 @@ pricing_agent_node = make_agent_node(
     lambda state: json.dumps(
         {
             "a2a_task": state["a2a_task"],
-            "shopping_result": state["shopping_result"],
+            "shopping_result": state.get("shopping_result", "(agent not on this path)"),
             "product_listing": state.get("product_listing", ""),
             "instruction": (
                 "Rank the candidates by value using the listed price and list price. "
@@ -261,6 +462,7 @@ pricing_agent_node = make_agent_node(
         indent=2,
     ),
     "pricing_result",
+    capability="price_check",
 )
 
 
@@ -270,8 +472,8 @@ inventory_agent_node = make_agent_node(
     lambda state: json.dumps(
         {
             "a2a_task": state["a2a_task"],
-            "shopping_result": state["shopping_result"],
-            "pricing_result": state["pricing_result"],
+            "shopping_result": state.get("shopping_result", "(agent not on this path)"),
+            "pricing_result": state.get("pricing_result", "(agent not on this path)"),
             "product_listing": state.get("product_listing", ""),
             "instruction": (
                 "Use the stock lines in the product listing. Mark which options are in stock now, "
@@ -281,6 +483,7 @@ inventory_agent_node = make_agent_node(
         indent=2,
     ),
     "inventory_result",
+    capability="stock_check",
 )
 
 
@@ -290,7 +493,7 @@ fulfillment_agent_node = make_agent_node(
     lambda state: json.dumps(
         {
             "a2a_task": state["a2a_task"],
-            "inventory_result": state["inventory_result"],
+            "inventory_result": state.get("inventory_result", "(agent not on this path)"),
             "product_listing": state.get("product_listing", ""),
             "instruction": (
                 "Recommend a fulfillment path using the delivery methods, ETAs, and costs in the listing. "
@@ -300,28 +503,258 @@ fulfillment_agent_node = make_agent_node(
         indent=2,
     ),
     "fulfillment_result",
+    capability="delivery_options",
 )
 
 
-order_agent_node = make_agent_node(
-    "order_agent",
-    (
-        "You are the AgentMart Order Agent. Prepare the final customer-facing response for Hermes/MyShopper. "
-        "Do not pretend an order was placed; summarize the recommended next action."
-    ),
-    lambda state: json.dumps(
+ORDER_AGENT_SYSTEM_PROMPT = (
+    "You are the AgentMart Order Agent. You speak to Hermes/MyShopper, which relays to the customer. "
+    "Work only from the order book and agent results you are given. Never invent an order id, "
+    "tracking reference, amount, or delivery date. If something is missing, say what is missing."
+)
+
+
+def _order_agent_prompt(state: AgentMartState) -> str:
+    intent = state.get("intent", "product_advice")
+    common = {
+        "a2a_task": state["a2a_task"],
+        "intent": intent,
+        "customer_id": state.get("customer_id"),
+    }
+
+    if intent == "order_status":
+        return json.dumps(
+            {
+                **common,
+                "order_book": state.get("order_context", ""),
+                "instruction": (
+                    "Answer the customer's order-status question from the order book. "
+                    "For each relevant order give: order id, status, what happens next, "
+                    "tracking reference and ETA when present. Flag any order that is "
+                    "awaiting payment as needing the customer's action."
+                ),
+            },
+            indent=2,
+        )
+
+    if intent == "purchase_intent":
+        return json.dumps(
+            {
+                **common,
+                "draft_order": state.get("draft_order", {}),
+                "inventory_result": state.get("inventory_result", "(agent not on this path)"),
+                "fulfillment_result": state.get("fulfillment_result", "(agent not on this path)"),
+                "instruction": (
+                    "A draft order has been created and is awaiting payment. Confirm back to the "
+                    "customer what is reserved, the line items, the total, and the delivery path. "
+                    "State clearly that nothing is charged until they confirm checkout."
+                ),
+            },
+            indent=2,
+        )
+
+    if intent == "checkout_payment":
+        return json.dumps(
+            {
+                **common,
+                "order_book": state.get("order_context", ""),
+                "order_to_settle": state.get("target_order_id"),
+                "instruction": (
+                    "Identify the single order to settle and restate its total and payment method "
+                    "for confirmation. Do not claim payment has happened: the Payment Agent runs next."
+                ),
+            },
+            indent=2,
+        )
+
+    # browse_catalog / product_advice: the original recommendation summary
+    return json.dumps(
         {
-            "a2a_task": state["a2a_task"],
-            "shopping_result": state["shopping_result"],
-            "pricing_result": state["pricing_result"],
-            "inventory_result": state["inventory_result"],
-            "fulfillment_result": state["fulfillment_result"],
-            "instruction": "Produce a final recommendation that Hermes/MyShopper can send back to the customer.",
+            **common,
+            "shopping_result": state.get("shopping_result", "(agent not on this path)"),
+            "pricing_result": state.get("pricing_result", "(agent not on this path)"),
+            "inventory_result": state.get("inventory_result", "(agent not on this path)"),
+            "fulfillment_result": state.get("fulfillment_result", "(agent not on this path)"),
+            "instruction": (
+                "Produce a final recommendation that Hermes/MyShopper can send back to the customer. "
+                "Do not pretend an order was placed; summarize the recommended next action."
+            ),
         },
         indent=2,
-    ),
-    "order_result",
+    )
+
+
+def order_agent_node(state: AgentMartState) -> AgentMartState:
+    """Order Agent. Reads the order book; creates a draft order on a purchase intent."""
+    intent = state.get("intent", "product_advice")
+    customer_id = state.get("customer_id", DEFAULT_CUSTOMER_ID)
+
+    envelope = emit_envelope(
+        state,
+        sender="hermes_myshopper",
+        recipient="order_agent",
+        intent=intent,
+        payload={"capability": "order_summary", "customer_id": customer_id},
+        lifecycle="accepted",
+    )
+
+    next_state: AgentMartState = {**state}
+
+    # A purchase intent materialises a real draft order before the model speaks.
+    if intent == "purchase_intent":
+        sku = state.get("target_sku")
+        if not sku:
+            next_state["draft_order"] = {"error": "no SKU identified in the customer request"}
+        else:
+            try:
+                draft = create_draft_order(
+                    customer_id=customer_id,
+                    items=[{"sku": sku, "quantity": 1}],
+                    warehouse="SG-CENTRAL",
+                    fulfillment_method="standard_delivery",
+                    shipping_usd=3.5,
+                )
+                next_state["draft_order"] = draft
+                next_state["target_order_id"] = draft["order_id"]
+                next_state["order_context"] = format_order(draft)
+            except (CatalogNotSeededError, OrderBookNotSeededError, ValueError) as exc:
+                next_state["draft_order"] = {"error": f"{type(exc).__name__}: {exc}"}
+
+    # A bare "checkout and pay" resolves to the customer's oldest unpaid order.
+    if intent == "checkout_payment" and not next_state.get("target_order_id"):
+        try:
+            payable = find_payable_order(customer_id)
+            if payable:
+                next_state["target_order_id"] = payable["order_id"]
+                next_state["order_context"] = format_order(payable)
+        except OrderBookNotSeededError as exc:
+            next_state["order_context"] = f"(order book unavailable: {exc})"
+
+    client = OpenRouterHermesClient(
+        dry_run=state.get("dry_run", False),
+        model_config=model_config_from_state(state),
+    )
+    result = client.complete("order_agent", ORDER_AGENT_SYSTEM_PROMPT, _order_agent_prompt(next_state))
+
+    emit_envelope(
+        next_state,
+        sender="order_agent",
+        recipient="hermes_myshopper",
+        intent=intent,
+        payload={
+            "order_id": next_state.get("target_order_id"),
+            "draft_created": bool(next_state.get("draft_order", {}).get("order_id")),
+        },
+        lifecycle="completed",
+    )
+
+    next_state = append_transcript(next_state, "order_agent", result, envelope)
+    next_state["order_result"] = result
+    return next_state
+
+
+PAYMENT_AGENT_SYSTEM_PROMPT = (
+    "You are the AgentMart Payment Agent. Payments in this workshop are SIMULATED: "
+    "the receipt you are given was written to a local database and no payment processor "
+    "was contacted. Confirm the settled order back to Hermes/MyShopper using only the "
+    "receipt values, and state plainly that this was a simulated payment."
 )
+
+
+def payment_agent_node(state: AgentMartState) -> AgentMartState:
+    """Payment Agent. Authorizes and captures a SIMULATED payment, then reports back."""
+    order_id = state.get("target_order_id")
+
+    envelope = emit_envelope(
+        state,
+        sender="order_agent",
+        recipient="payment_agent",
+        intent="checkout_payment",
+        payload={"capability": "payment_capture", "order_id": order_id, "simulated": True},
+        lifecycle="accepted",
+    )
+
+    next_state: AgentMartState = {**state}
+    receipt: dict[str, Any]
+    if not order_id:
+        receipt = {"error": "no payable order found for this customer"}
+    else:
+        try:
+            settled = checkout_and_pay(order_id)
+            receipt = {
+                "simulated": True,
+                "payment_id": settled["payment"]["payment_id"],
+                "processor_ref": settled["payment"]["processor_ref"],
+                "status": settled["payment"]["status"],
+                "amount_usd": settled["payment"]["amount_usd"],
+                "method_id": settled["payment"]["method_id"],
+                "order_id": order_id,
+                "order_status": settled["order"]["status"],
+            }
+        except (OrderNotFoundError, OrderBookNotSeededError, ValueError) as exc:
+            receipt = {"error": f"{type(exc).__name__}: {exc}", "order_id": order_id}
+
+    next_state["payment_receipt"] = receipt
+
+    client = OpenRouterHermesClient(
+        dry_run=state.get("dry_run", False),
+        model_config=model_config_from_state(state),
+    )
+    result = client.complete(
+        "payment_agent",
+        PAYMENT_AGENT_SYSTEM_PROMPT,
+        json.dumps({"a2a_task": state["a2a_task"], "receipt": receipt}, indent=2),
+    )
+
+    emit_envelope(
+        next_state,
+        sender="payment_agent",
+        recipient="hermes_myshopper",
+        intent="checkout_payment",
+        payload={k: v for k, v in receipt.items() if k != "error"} or {"error": receipt.get("error")},
+        lifecycle="failed" if "error" in receipt else "completed",
+    )
+
+    next_state = append_transcript(next_state, "payment_agent", result, envelope)
+    next_state["payment_result"] = result
+    return next_state
+
+
+# Which AgentMart agents each intent actually visits. Routing on capability is
+# the Part 7 teaching point: a status question must not wake the whole ecosystem.
+INTENT_PATHS: dict[str, tuple[str, ...]] = {
+    "browse_catalog": ("shopping_agent", "pricing_agent", "inventory_agent", "order_agent"),
+    "product_advice": (
+        "shopping_agent",
+        "pricing_agent",
+        "inventory_agent",
+        "fulfillment_agent",
+        "order_agent",
+    ),
+    # Stops at the Order Agent on purpose: a purchase intent leaves a draft in
+    # `awaiting_payment`. Settling it is a separate, explicit checkout turn.
+    "purchase_intent": ("inventory_agent", "fulfillment_agent", "order_agent"),
+    "checkout_payment": ("order_agent", "payment_agent"),
+    "order_status": ("order_agent",),
+}
+
+
+def route_from_hermes(state: AgentMartState) -> str:
+    """First AgentMart hop for this intent."""
+    return INTENT_PATHS[state.get("intent", "product_advice")][0]
+
+
+def _next_after(node: str) -> Callable[[AgentMartState], str]:
+    """Follow this intent's path; fall off to END when the node is its last hop."""
+
+    def router(state: AgentMartState) -> str:
+        path = INTENT_PATHS[state.get("intent", "product_advice")]
+        if node not in path:
+            return END
+        index = path.index(node)
+        return path[index + 1] if index + 1 < len(path) else END
+
+    return router
 
 
 def build_graph():
@@ -332,14 +765,29 @@ def build_graph():
     graph.add_node("inventory_agent", inventory_agent_node)
     graph.add_node("fulfillment_agent", fulfillment_agent_node)
     graph.add_node("order_agent", order_agent_node)
+    graph.add_node("payment_agent", payment_agent_node)
 
     graph.add_edge(START, "hermes_myshopper")
-    graph.add_edge("hermes_myshopper", "shopping_agent")
-    graph.add_edge("shopping_agent", "pricing_agent")
-    graph.add_edge("pricing_agent", "inventory_agent")
-    graph.add_edge("inventory_agent", "fulfillment_agent")
-    graph.add_edge("fulfillment_agent", "order_agent")
-    graph.add_edge("order_agent", END)
+
+    agent_nodes = [
+        "shopping_agent",
+        "pricing_agent",
+        "inventory_agent",
+        "fulfillment_agent",
+        "order_agent",
+        "payment_agent",
+    ]
+    graph.add_conditional_edges(
+        "hermes_myshopper",
+        route_from_hermes,
+        {name: name for name in agent_nodes},
+    )
+    for name in agent_nodes:
+        graph.add_conditional_edges(
+            name,
+            _next_after(name),
+            {**{other: other for other in agent_nodes if other != name}, END: END},
+        )
     return graph.compile()
 
 
@@ -350,6 +798,8 @@ def run_agentmart(
     config_path: str | None = None,
     category: str | None = None,
     max_price: float | None = None,
+    customer_id: str = DEFAULT_CUSTOMER_ID,
+    intent: Intent | None = None,
 ) -> AgentMartState:
     app = build_graph()
     return app.invoke(
@@ -357,9 +807,12 @@ def run_agentmart(
             "customer_request": customer_request,
             "channel": channel,
             "dry_run": dry_run,
+            "customer_id": customer_id,
+            "intent": intent or classify_intent(customer_request),
             "hermes_a2a_config": load_hermes_a2a_config(config_path),
             "product_listing": load_product_listing(category=category, max_price=max_price),
             "transcript": [],
+            "a2a_log": [],
         }
     )
 
@@ -407,6 +860,16 @@ def main() -> None:
         help="Customer buying request to send through Hermes/MyShopper.",
     )
     parser.add_argument("--channel", default="webchat", help="Customer channel name.")
+    parser.add_argument(
+        "--customer",
+        default=DEFAULT_CUSTOMER_ID,
+        help=f"Customer id from the seeded order book (default: {DEFAULT_CUSTOMER_ID}).",
+    )
+    parser.add_argument(
+        "--intent",
+        choices=list(INTENT_PATHS),
+        help="Force an intent instead of routing on the request text.",
+    )
     parser.add_argument("--config", help="Path to Hermes A2A configuration JSON.")
     parser.add_argument("--dry-run", action="store_true", help="Run without calling OpenRouter.")
     parser.add_argument("--category", help="Limit the seeded product listing to a category, e.g. audio/earbuds.")
@@ -431,6 +894,8 @@ def main() -> None:
         config_path=args.config,
         category=args.category,
         max_price=args.max_price,
+        customer_id=args.customer,
+        intent=args.intent,
     )
     print(json.dumps(result, indent=2))
 

@@ -13,7 +13,9 @@
       "personal_buying_request",
       "product_preference_extraction",
       "customer_constraint_handoff",
-      "agentmart_a2a_negotiation"
+      "agentmart_a2a_negotiation",
+      "order_status_lookup",
+      "checkout_initiation"
     ],
     "model": {
       "provider": "openrouter",
@@ -36,7 +38,15 @@
     "heartbeat_stream": "agentmart.a2a.heartbeats",
     "capability_registry": "agentmart.a2a.capabilities",
     "message_ttl_seconds": 900,
-    "requires_ack": true
+    "requires_ack": true,
+    "task_lifecycle": [
+      "proposed",
+      "accepted",
+      "in_progress",
+      "completed",
+      "failed"
+    ],
+    "correlates_by": "correlation_id"
   },
   "agentmart": {
     "id": "agentmart",
@@ -75,9 +85,48 @@
         "id": "order_agent",
         "capabilities": [
           "order_summary",
-          "checkout_next_step"
+          "checkout_next_step",
+          "order_status_lookup",
+          "draft_order_create"
         ]
+      },
+      {
+        "id": "payment_agent",
+        "capabilities": [
+          "payment_authorize",
+          "payment_capture",
+          "refund_status"
+        ],
+        "simulated": true,
+        "note": "Workshop payment agent. Writes simulated payment rows locally; contacts no payment processor."
       }
+    ]
+  },
+  "intent_routing": {
+    "browse_catalog": [
+      "shopping_agent",
+      "pricing_agent",
+      "inventory_agent",
+      "order_agent"
+    ],
+    "product_advice": [
+      "shopping_agent",
+      "pricing_agent",
+      "inventory_agent",
+      "fulfillment_agent",
+      "order_agent"
+    ],
+    "purchase_intent": [
+      "inventory_agent",
+      "fulfillment_agent",
+      "order_agent"
+    ],
+    "checkout_payment": [
+      "order_agent",
+      "payment_agent"
+    ],
+    "order_status": [
+      "order_agent"
     ]
   }
 }

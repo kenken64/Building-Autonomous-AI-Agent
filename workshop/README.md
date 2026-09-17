@@ -29,14 +29,18 @@ AgentMart Agent Ecosystem
    +-- Inventory Agent
    +-- Fulfillment Agent
    +-- Order Agent
+   +-- Payment Agent (simulated)
 ```
 
 The lab includes:
 
 - a LangGraph workflow for the AgentMart agent group
 - an OpenRouter-backed OpenAI-compatible model client
-- a Hermes/MyShopper A2A sender node
-- `hermes_a2a_config.json`, which defines the Hermes agent identity, A2A connection, heartbeat stream, capability registry, and target AgentMart agents
+- a Hermes/MyShopper A2A sender node, with a correlated envelope per agent hop
+- intent routing, so a status question does not wake the whole ecosystem
+- a seeded order book and a simulated Payment Agent
+- `hermes_a2a_config.json`, which defines the Hermes agent identity, A2A connection, heartbeat stream, capability registry, intent routing, and target AgentMart agents
+- a scenario suite covering the end-to-end customer flows
 - dry-run mode for testing the workflow without an API key
 
 ## Quick Start
@@ -102,6 +106,25 @@ To verify the workflow without calling OpenRouter:
 python agentmart_ecosystem.py --dry-run "Find me wireless earbuds under $120 with good battery life."
 ```
 
+## Scenario Suite
+
+`test_scenarios.py` drives the customer flows end to end and asserts on the
+intent chosen, the agents woken, the A2A envelope chain, and the order book:
+
+```bash
+python test_scenarios.py              # all scenarios, dry-run, no API key needed
+python test_scenarios.py --list       # list scenario names
+python test_scenarios.py --verbose    # show the A2A hops and agent replies
+python test_scenarios.py --live       # call OpenRouter for real
+```
+
+Covers: "what is my order status", "list me the available products",
+"I want to buy this AM-EAR-1002", "checkout and pay", the original
+recommendation pipeline, and a chained buy-then-checkout.
+
+Payments are simulated: the Payment Agent writes rows to the local SQLite
+database and contacts no payment processor.
+
 ## Seeded Data
 
 The lab ships a product catalog so the agents reason over real SKUs, prices,
@@ -114,4 +137,12 @@ python seed_data.py --list         # print the seeded product listing
 python seed_data.py --list --category audio/earbuds --max-price 120
 ```
 
-Edit `data/products.json` to change the catalog, then re-run `python seed_data.py`.
+`seed_data.py` also seeds the order book from `data/orders.json`: three
+customers, five orders across every lifecycle state, and their payment history.
+
+```bash
+python seed_data.py --list-orders  # print the seeded order book
+```
+
+Edit `data/products.json` or `data/orders.json` to change the seeded data, then
+re-run `python seed_data.py`.
