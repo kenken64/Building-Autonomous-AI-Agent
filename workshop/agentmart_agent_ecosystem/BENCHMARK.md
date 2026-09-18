@@ -182,16 +182,12 @@ own `/v1/chat/completions`:
 That last pair is the trap: with function tools the parameter must be present *and*
 set to `none`. Omitting it fails just as hard as setting it to `medium`.
 
-**Consequence — the lab and Hermes take different routes to the same model:**
+**Consequence — Hermes needs the parameter forced onto the wire.**
 
-| | Endpoint | Why |
-| --- | --- | --- |
-| AgentMart's six agents | OpenAI direct | They never call tools, so the restriction never bites. Full `reasoning_effort` available. |
-| Hermes/MyShopper | via OpenRouter | Every Hermes turn carries tool schemas. Hermes cannot emit `reasoning_effort: "none"` on this wire and has no `/v1/responses` mode for the provider, so OpenAI rejects every call. OpenRouter normalizes the combination and tools + reasoning work. |
-
-Hermes direct-to-OpenAI was attempted and abandoned: `provider: openai-api` with
-`agent.reasoning_effort: none`, and an explicit `hermes --reasoning none`, both
-still returned
+With function tools the parameter must be present *and* set to `none`. Hermes'
+effort ladder (`agent/reasoning_effort.py`) treats a disable as "unset" and so
+never emits it, which is why `agent.reasoning_effort: none` and an explicit
+`hermes --reasoning none` both still failed with:
 
 ```
 HTTP 400: Function tools with reasoning_effort are not supported for
@@ -199,12 +195,37 @@ gpt-5.6-luna in /v1/chat/completions. To use function tools, use
 /v1/responses or set reasoning_effort to 'none'.
 ```
 
-This is a Hermes limitation, not an OpenAI one — the wire level never reaches the
-API as `none`.
+The fix is a `custom_providers` entry, whose `extra_body` is merged into the
+request body verbatim and bypasses the ladder entirely:
 
-The lab client therefore shapes each request by endpoint (`openai_native`, set from
-the base URL), so the same code works against either. `OPENAI_*` environment
-variables take precedence over `OPENROUTER_*` when present.
+```yaml
+custom_providers:
+  - name: openai-luna
+    base_url: https://api.openai.com/v1
+    key_env: OPENAI_API_KEY
+    api_mode: chat_completions
+    model: gpt-5.6-luna
+    extra_body:
+      reasoning_effort: none      # forced; Hermes will not emit this level itself
+
+model:
+  default: gpt-5.6-luna
+  provider: custom:openai-luna
+  base_url: https://api.openai.com/v1
+  api_mode: chat_completions
+```
+
+Both halves now run on OpenAI directly. Verified by watching OpenRouter's reported
+usage across a Hermes turn: the delta was `$0.000000`, so nothing routed there.
+
+The trade is that Hermes runs this model with **no reasoning at all**. That is
+acceptable because Hermes' job in this lab is routing and relaying — the
+deliberation happens inside the AgentMart agents, which keep full
+`reasoning_effort` because they never call tools.
+
+Only the gpt-5.6 family carries this restriction. On the same key, `gpt-5`,
+`gpt-5-mini`, `gpt-4.1` and `gpt-4o` all accept tools on `/v1/chat/completions`
+with no special handling, and would need no `extra_body` entry.
 
 ## Caveats
 

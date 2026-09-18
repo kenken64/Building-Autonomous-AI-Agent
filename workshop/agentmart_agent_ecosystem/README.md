@@ -235,12 +235,13 @@ rejects `max_tokens` (wants `max_completion_tokens`), rejects any temperature bu
 its default, and takes `reasoning_effort` as a top-level parameter rather than
 OpenRouter's `reasoning` object. `--check-model` prints which endpoint is live.
 
-**Hermes cannot use this path.** Every Hermes turn carries tool schemas, and
-`gpt-5.6-luna` rejects function tools together with `reasoning_effort` on
-`/v1/chat/completions` — including when the parameter is omitted. It must be
-present and set to `none`, which Hermes cannot emit. So Hermes reaches the same
-model through OpenRouter (`openai/gpt-5.6-luna`), which normalizes the
-combination. Section 8 of `BENCHMARK.md` has the full parameter matrix.
+**Hermes needs one extra step on this path.** Every Hermes turn carries tool
+schemas, and `gpt-5.6-luna` rejects function tools together with
+`reasoning_effort` — including when the parameter is omitted. It must be present
+and set to `none`, a level Hermes' effort ladder will not emit on its own. A
+`custom_providers` entry forces it onto the wire via `extra_body`, after which
+Hermes runs against OpenAI directly with tools working. Section 8 of
+`BENCHMARK.md` has the full parameter matrix and the exact config block.
 
 Switch model for a single run without editing any file:
 

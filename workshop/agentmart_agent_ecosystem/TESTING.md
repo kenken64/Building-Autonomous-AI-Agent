@@ -7,7 +7,7 @@ Three layers, each testable on its own. Test them in order — a failure at laye
 will look like a protocol bug at layer 3.
 
 ```
-  Layer 3   Telegram / CLI → Hermes (gpt-5.6-luna via OpenRouter) ──┐
+  Layer 3   Telegram / CLI → Hermes (gpt-5.6-luna, OpenAI direct) ──┐
                                                 │ a2a_call
   Layer 2   A2A v1.0 JSON-RPC over HTTP :9901 ──┤
                                                 │
