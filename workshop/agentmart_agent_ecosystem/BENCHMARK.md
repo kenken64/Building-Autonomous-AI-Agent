@@ -160,6 +160,52 @@ wc -l < ~/.hermes/a2a_audit.jsonl
 python test_scenarios.py
 ```
 
+## 8. gpt-5.6-luna, and why it runs on two different endpoints
+
+Added after the original comparison. `gpt-5.6-luna` is **3.6x faster** than
+qwen3.7-flash on the six-agent chain — 21s against 76s — and ~8x dearer:
+~$0.0110 per run against ~$0.0014 ($0.200/M in, $1.200/M out).
+
+It also has the most restrictive parameter surface of anything tested. On OpenAI's
+own `/v1/chat/completions`:
+
+| Parameter | Result |
+| --- | --- |
+| `max_tokens` | rejected — needs `max_completion_tokens` |
+| `temperature: 0.2` | rejected — only the model default is allowed |
+| `reasoning: {"effort": ...}` (OpenRouter shape) | rejected — unknown parameter |
+| `reasoning_effort`, **no** tools | works — 6.0s, 3/3 SKUs |
+| `reasoning_effort` **with** tools | **rejected** |
+| `reasoning_effort: "none"` with tools | works — 1.5s, tool call fires |
+| tools, `reasoning_effort` omitted | **rejected** |
+
+That last pair is the trap: with function tools the parameter must be present *and*
+set to `none`. Omitting it fails just as hard as setting it to `medium`.
+
+**Consequence — the lab and Hermes take different routes to the same model:**
+
+| | Endpoint | Why |
+| --- | --- | --- |
+| AgentMart's six agents | OpenAI direct | They never call tools, so the restriction never bites. Full `reasoning_effort` available. |
+| Hermes/MyShopper | via OpenRouter | Every Hermes turn carries tool schemas. Hermes cannot emit `reasoning_effort: "none"` on this wire and has no `/v1/responses` mode for the provider, so OpenAI rejects every call. OpenRouter normalizes the combination and tools + reasoning work. |
+
+Hermes direct-to-OpenAI was attempted and abandoned: `provider: openai-api` with
+`agent.reasoning_effort: none`, and an explicit `hermes --reasoning none`, both
+still returned
+
+```
+HTTP 400: Function tools with reasoning_effort are not supported for
+gpt-5.6-luna in /v1/chat/completions. To use function tools, use
+/v1/responses or set reasoning_effort to 'none'.
+```
+
+This is a Hermes limitation, not an OpenAI one — the wire level never reaches the
+API as `none`.
+
+The lab client therefore shapes each request by endpoint (`openai_native`, set from
+the base URL), so the same code works against either. `OPENAI_*` environment
+variables take precedence over `OPENROUTER_*` when present.
+
 ## Caveats
 
 - **n = 1 per cell.** No repeats, no confidence intervals. Latency especially

@@ -126,9 +126,15 @@ class OpenRouterHermesClient:
         load_dotenv()
         config = model_config or {}
         self.dry_run = dry_run
-        self.api_key = os.getenv("OPENROUTER_API_KEY", "")
-        self.base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-        self.model = os.getenv("OPENROUTER_MODEL") or config.get("default_model") or DEFAULT_MODEL
+        # OPENAI_* wins when set, so pointing the lab at OpenAI directly needs no rename.
+        self.api_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
+        self.base_url = (os.getenv("OPENAI_BASE_URL") or
+                         os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
+        self.model = (os.getenv("OPENAI_MODEL") or os.getenv("OPENROUTER_MODEL")
+                      or config.get("default_model") or DEFAULT_MODEL)
+        # OpenAI's own endpoint and OpenRouter disagree on three parameters, so the
+        # request has to be shaped per endpoint rather than sent one way and hoped for.
+        self.openai_native = "api.openai.com" in self.base_url
         self.fallback_models = config.get("fallback_models", [])
         self.temperature = float(os.getenv("OPENROUTER_TEMPERATURE", config.get("temperature", 0.2)))
         self.max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS", config.get("max_tokens", 1200)))
@@ -148,27 +154,35 @@ class OpenRouterHermesClient:
         from openai import OpenAI
 
         client = OpenAI(base_url=self.base_url, api_key=self.api_key)
-        extra_body: dict[str, Any] = {}
-        if self.fallback_models:
-            # OpenRouter retries these in order if the primary model is unavailable.
-            extra_body["models"] = [self.model, *self.fallback_models]
-        if self.reasoning_effort and self.reasoning_effort != "default":
-            extra_body["reasoning"] = {"effort": self.reasoning_effort}
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        kwargs: dict[str, Any] = {"model": self.model, "messages": messages}
 
-        response = client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": self.http_referer,
-                "X-Title": self.app_title,
-            },
-            extra_body=extra_body,
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-        )
+        if self.openai_native:
+            # The gpt-5.6 family rejects `max_tokens` (wants `max_completion_tokens`),
+            # rejects any temperature but the default, and takes reasoning as a
+            # top-level `reasoning_effort` rather than OpenRouter's `reasoning` object.
+            # Model fallbacks and the attribution headers are OpenRouter features.
+            kwargs["max_completion_tokens"] = self.max_tokens
+            if self.reasoning_effort and self.reasoning_effort != "default":
+                kwargs["reasoning_effort"] = self.reasoning_effort
+        else:
+            extra_body: dict[str, Any] = {}
+            if self.fallback_models:
+                # OpenRouter retries these in order if the primary model is unavailable.
+                extra_body["models"] = [self.model, *self.fallback_models]
+            if self.reasoning_effort and self.reasoning_effort != "default":
+                extra_body["reasoning"] = {"effort": self.reasoning_effort}
+            kwargs.update(
+                extra_headers={"HTTP-Referer": self.http_referer, "X-Title": self.app_title},
+                extra_body=extra_body,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            )
+
+        response = client.chat.completions.create(**kwargs)
         return response.choices[0].message.content or ""
 
     @staticmethod
@@ -922,25 +936,35 @@ def run_agentmart(
 
 
 def check_model_connection(config_path: str | None = None) -> int:
-    """Verify the OpenRouter key and model before running the full graph."""
+    """Verify the key, endpoint and model before running the full graph."""
     config = load_hermes_a2a_config(config_path)
     model_config = config["hermes_agent"].get("model", {})
     client = OpenRouterHermesClient(model_config=model_config)
 
+    endpoint = "OpenAI" if client.openai_native else "OpenRouter"
     print("Hermes model configuration")
-    print(f"  provider    : {model_config.get('provider', 'openrouter')}")
+    print(f"  endpoint    : {endpoint}")
     print(f"  base_url    : {client.base_url}")
     print(f"  model       : {client.model}")
-    print(f"  fallbacks   : {', '.join(client.fallback_models) or 'none'}")
-    print(f"  temperature : {client.temperature}")
-    print(f"  max_tokens  : {client.max_tokens}")
+    # Model fallbacks and temperature are OpenRouter features; say so rather than
+    # printing settings that this endpoint will silently ignore.
+    if client.openai_native:
+        print(f"  fallbacks   : n/a (OpenRouter only)")
+        print(f"  temperature : n/a (model default)")
+        print(f"  max_tokens  : {client.max_tokens} (sent as max_completion_tokens)")
+    else:
+        print(f"  fallbacks   : {', '.join(client.fallback_models) or 'none'}")
+        print(f"  temperature : {client.temperature}")
+        print(f"  max_tokens  : {client.max_tokens}")
+    print(f"  reasoning   : {client.reasoning_effort or 'default'}")
     print(f"  api_key     : {'set' if client.api_key else 'MISSING'}")
 
     if not client.api_key:
-        print("\nOPENROUTER_API_KEY is not set. Add it to .env, then re-run.")
+        key_var = "OPENAI_API_KEY" if client.openai_native else "OPENROUTER_API_KEY"
+        print(f"\n{key_var} is not set. Add it to .env, then re-run.")
         return 1
 
-    print("\nCalling OpenRouter...")
+    print(f"\nCalling {endpoint}...")
     try:
         reply = client.complete(
             "hermes_myshopper",
