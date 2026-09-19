@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import operator
 import os
 import re
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +17,11 @@ from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 
 from catalog import CatalogNotSeededError, format_product_listing, query_products
+
+# Per-hop timing. httpx logs when response *headers* arrive, not when the body is
+# read, so its lines understate a slow call and cannot be used to find the slowest
+# agent. These measure the whole call.
+logger = logging.getLogger("agentmart")
 from orders import (
     OrderBookNotSeededError,
     OrderNotFoundError,
@@ -182,8 +189,20 @@ class OpenRouterHermesClient:
                 max_tokens=self.max_tokens,
             )
 
+        started = time.time()
         response = client.chat.completions.create(**kwargs)
-        return response.choices[0].message.content or ""
+        elapsed = time.time() - started
+        content = response.choices[0].message.content or ""
+        usage = getattr(response, "usage", None)
+        details = getattr(usage, "completion_tokens_details", None) if usage else None
+        logger.info(
+            "PERF agent=%s %.1fs prompt_tok=%s completion_tok=%s reasoning_tok=%s out_chars=%d finish=%s",
+            agent_name, elapsed,
+            getattr(usage, "prompt_tokens", "?"), getattr(usage, "completion_tokens", "?"),
+            getattr(details, "reasoning_tokens", "?") if details else "?",
+            len(content), response.choices[0].finish_reason,
+        )
+        return content
 
     @staticmethod
     def _dry_run_reply(agent_name: str, user_prompt: str) -> str:
@@ -566,7 +585,14 @@ fulfillment_agent_node = make_agent_node(
 ORDER_AGENT_SYSTEM_PROMPT = (
     "You are the AgentMart Order Agent. You speak to Hermes/MyShopper, which relays to the customer. "
     "Work only from the order book and agent results you are given. Never invent an order id, "
-    "tracking reference, amount, or delivery date. If something is missing, say what is missing."
+    "tracking reference, amount, or delivery date. If something is missing, say what is missing. "
+    # Your reader is another agent, not the customer. Hermes rewrites this into prose for
+    # the chat, so every word of framing here is paid for twice: once to generate, again
+    # when Hermes reads it back. Facts are what travel; the phrasing is Hermes' job.
+    "Answer as compact structured facts, not prose. No greeting, no preamble, no closing "
+    "offer, no restating the question. One line per option: SKU, name, price, the one or "
+    "two attributes that decide it, stock, and delivery. Put any caveat on its own short "
+    "line. Aim for 600 characters or fewer."
 )
 
 
@@ -982,6 +1008,8 @@ def main() -> None:
     )
     parser.add_argument("--config", help="Path to Hermes A2A configuration JSON.")
     parser.add_argument("--dry-run", action="store_true", help="Run without calling OpenRouter.")
+    parser.add_argument("--timing", action="store_true",
+                        help="Print a PERF line per agent hop (duration, tokens, finish reason).")
     parser.add_argument("--category", help="Limit the seeded product listing to a category, e.g. audio/earbuds.")
     parser.add_argument("--max-price", type=float, help="Limit the seeded product listing by maximum price.")
     parser.add_argument(
@@ -990,6 +1018,9 @@ def main() -> None:
         help="Print the Hermes model settings and test the OpenRouter connection, then exit.",
     )
     args = parser.parse_args()
+
+    if args.timing:
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     if args.check_model:
         raise SystemExit(check_model_connection(args.config))

@@ -64,6 +64,44 @@ other kind of request alone.
 
 ---
 
+## Finding the bottleneck
+
+Every model call logs its own duration, so the slowest hop is greppable rather
+than guessed at:
+
+```bash
+# Server: one PERF line per agent, then the task total
+grep "PERF agent=" ~/.../a2a_live.log
+#  PERF agent=pricing_agent 7.1s prompt_tok=2975 completion_tok=1003 reasoning_tok=341 ...
+grep "task done" ~/.../a2a_live.log
+#  A2A task done: 6 hop(s) in 22.3s
+
+# CLI: same lines, without running the server
+./.venv/bin/python agentmart_ecosystem.py --timing "Find me wireless earbuds under $120."
+```
+
+Read `completion_tok` next to the duration: these agents are almost always slow
+because they are *writing* a lot, not because the prompt is large.
+
+**Do not time the bottleneck with `httpx` log lines.** They are emitted when
+response headers arrive, not when the body has been read, so a slow call looks
+fast and the time appears to vanish somewhere after it. The `PERF` lines wrap the
+whole call.
+
+**Do not tune against `hermes -z` either.** The CLI pays ~3s of process startup
+per invocation that the gateway never pays. The truth for a Telegram user is in
+`~/.hermes/logs/gateway.log`:
+
+```bash
+grep "response ready" ~/.hermes/logs/gateway.log | tail
+#  response ready: platform=telegram ... time=32.3s api_calls=2 response=552
+```
+
+`api_calls=2` is Hermes' own two calls per turn — one to decide to call the peer,
+one to compose the reply from what came back.
+
+---
+
 ## Layer 1 — the graph alone
 
 No network, no Hermes. Proves routing, the order book and the agent prompts.

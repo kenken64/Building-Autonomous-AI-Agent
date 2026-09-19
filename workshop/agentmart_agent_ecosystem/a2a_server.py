@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -183,15 +184,15 @@ def render_reply(state: dict) -> str:
     reply = str(final.get("message") or "").strip() or "(no message)"
     if not OPTIONS["show_hops"]:
         return reply
-    hops = [entry.get("agent", "?") for entry in transcript]
-    intent = state.get("intent", "?")
-    trail = " -> ".join(hops)
-    return f"{reply}\n\n---\n[intent: {intent}]\n[A2A hops: {trail}]"
+    # One line, not four: the caller is an agent that re-reads every byte of this.
+    hops = ">".join(e.get("agent", "?").replace("_agent", "") for e in transcript)
+    return f"{reply}\n[{state.get('intent', '?')}: {hops}]"
 
 
 def run_task(message: str) -> str:
     intent = classify_intent(message)
     logger.info("A2A task received: intent=%s text=%r", intent, message[:120])
+    started = time.time()
     state = run_agentmart(
         message,
         channel=OPTIONS["channel"],
@@ -200,8 +201,13 @@ def run_task(message: str) -> str:
         customer_id=OPTIONS["customer_id"],
         intent=intent,
     )
+    elapsed = time.time() - started
     reply = render_reply(state)
-    logger.info("A2A task done: %d hop(s)", len(state.get("transcript") or []))
+    hops = len(state.get("transcript") or [])
+    # The per-agent `PERF agent=...` lines above this one carry the breakdown; this
+    # is the total a caller actually waited for, so the two can be compared directly.
+    logger.info('A2A task done: %d hop(s) in %.1fs — the per-hop PERF lines above have the breakdown',
+                hops, elapsed)
     return reply
 
 
