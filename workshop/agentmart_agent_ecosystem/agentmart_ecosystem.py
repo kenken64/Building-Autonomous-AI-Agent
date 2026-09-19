@@ -318,12 +318,20 @@ INTENT_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         # is my order" and "when will it arrive" want different agents -- the second
         # needs simulated dates, not a status row.
         "shipping_estimate",
+        # These must match a question ABOUT timing, not a request that merely lists
+        # timing among the fields it wants back. A remote agent asking for a product
+        # shortlist routinely says "...and delivery options/ETA", and a bare \beta\b
+        # once sent exactly that to the Shipping Agent, so the catalog was never
+        # searched and the customer got no products at all. ETA and "shipping options"
+        # now have to be the subject, not an item on a wish list.
         re.compile(
-            r"when\s+(will|would|can|do)\s+.*(arrive|deliver|ship|get\s+here|reach)|"
-            r"how\s+(long|many\s+days)\s+.*(deliver|ship|arriv)|"
-            r"delivery\s+(date|estimate|eta)|shipping\s+(date|estimate|eta|options?)|"
-            r"\beta\b|estimated\s+(delivery|arrival)|"
-            r"(get|have)\s+it\s+by\b|arrive\s+(by|before)\b",
+            r"when\s+(will|would|can|does|do)\b[^.?!]{0,60}\b"
+            r"(arrive|deliver|delivered|ship|shipped|dispatch|get\s+here|reach)|"
+            r"how\s+(long|many\s+days)\b[^.?!]{0,40}\b(deliver|ship|arriv|dispatch|take)|"
+            r"(delivery|shipping|dispatch)\s+(date|dates|window|timeline)\b|"
+            r"estimated\s+(delivery|arrival|dispatch)|"
+            r"what(?:'s|\s+is)\s+the\s+eta\b|\beta\s+(for|on|of)\b|"
+            r"(get|have|receive)\s+it\s+by\b|arrive\s+(by|before)\b",
             re.IGNORECASE,
         ),
     ),

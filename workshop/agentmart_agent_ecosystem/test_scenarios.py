@@ -326,6 +326,24 @@ ROUTING_CASES: tuple[tuple[str, str], ...] = (
      "take any payment, authorization, capture, refund, or cancellation action.", "order_status"),
     # No keyword survives the strip -- the order id alone must keep it off product_advice.
     ("Please proceed to fulfillment for existing order AM-ORD-20260915-0003.", "order_status"),
+    # Timing questions reach the Shipping Agent...
+    ("When will my order arrive?", "shipping_estimate"),
+    ("How long is delivery to MY-JB?", "shipping_estimate"),
+    ("What's the ETA on AM-ORD-20260912-0002?", "shipping_estimate"),
+    ("Can I have it by Friday?", "shipping_estimate"),
+    # ...but a product search that merely *asks for* timing among its fields must not.
+    # This exact rewrite reached the Shipping Agent once: the catalog was never
+    # searched, three agents never ran, and the customer got no products at all.
+    ("Find wireless earbuds under $120 with good battery life. Return currently "
+     "buyable listings with exact SKU, model, current price, stock, battery life, "
+     "key features, and delivery options/ETA. Prioritize battery life and value. "
+     "Do not place an order.", "product_advice"),
+    ("Find me earbuds under $120, include shipping options.", "product_advice"),
+    # "Show me" is a browse, which still searches the catalog -- the point of this
+    # case is that asking for an ETA alongside must not divert it to shipping.
+    ("Show me headphones and their delivery options/ETA.", "browse_catalog"),
+    # "where is my order" is a status lookup, not a date question.
+    ("Where is my order AM-ORD-20260912-0002?", "order_status"),
     # "where to buy" is advice; "wants to buy" is intent.
     ("Find wireless earbuds under $120 and include a link or where to buy.", "product_advice"),
     ("The customer wants to buy SKU AM-EAR-1002 (Nimbus Air 2).", "purchase_intent"),
