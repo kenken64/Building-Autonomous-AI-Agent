@@ -363,8 +363,12 @@ def check_pipeline_inputs() -> list[Check]:
     original = ae.OpenRouterHermesClient.complete
 
     def spy(self, agent, system_prompt, user_prompt):  # noqa: ANN001
+        # The user turn is a role line followed by the JSON payload -- the catalog
+        # lives in the shared system message so the prefix stays cacheable, so parse
+        # from the first brace rather than assuming the whole turn is JSON.
         try:
-            seen[agent] = json.loads(user_prompt)
+            text = user_prompt if isinstance(user_prompt, str) else ""
+            seen[agent] = json.loads(text[text.index("{"):]) if "{" in text else {}
         except (TypeError, ValueError):
             seen[agent] = {}
         return original(self, agent, system_prompt, user_prompt)

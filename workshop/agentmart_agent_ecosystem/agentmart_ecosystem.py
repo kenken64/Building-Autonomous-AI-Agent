@@ -129,7 +129,8 @@ class OpenRouterHermesClient:
       3. the built-in defaults
     """
 
-    def __init__(self, dry_run: bool = False, model_config: dict[str, Any] | None = None) -> None:
+    def __init__(self, dry_run: bool = False, model_config: dict[str, Any] | None = None,
+                 model_override: str | None = None) -> None:
         load_dotenv()
         config = model_config or {}
         self.dry_run = dry_run
@@ -137,11 +138,17 @@ class OpenRouterHermesClient:
         self.api_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
         self.base_url = (os.getenv("OPENAI_BASE_URL") or
                          os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
-        self.model = (os.getenv("OPENAI_MODEL") or os.getenv("OPENROUTER_MODEL")
+        self.model = (model_override
+                      or os.getenv("OPENAI_MODEL") or os.getenv("OPENROUTER_MODEL")
                       or config.get("default_model") or DEFAULT_MODEL)
         # OpenAI's own endpoint and OpenRouter disagree on three parameters, so the
         # request has to be shaped per endpoint rather than sent one way and hoped for.
         self.openai_native = "api.openai.com" in self.base_url
+        # OpenAI splits its own catalogue in two: the reasoning families take
+        # reasoning_effort and reject any temperature but their default, while
+        # gpt-4.x takes temperature and rejects reasoning_effort outright.
+        # OpenRouter normalizes both, so this only matters on the direct endpoint.
+        self.openai_reasoning_family = self.model.startswith(("gpt-5", "o1", "o3", "o4"))
         self.fallback_models = config.get("fallback_models", [])
         self.temperature = float(os.getenv("OPENROUTER_TEMPERATURE", config.get("temperature", 0.2)))
         self.max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS", config.get("max_tokens", 1200)))
@@ -173,8 +180,11 @@ class OpenRouterHermesClient:
             # top-level `reasoning_effort` rather than OpenRouter's `reasoning` object.
             # Model fallbacks and the attribution headers are OpenRouter features.
             kwargs["max_completion_tokens"] = self.max_tokens
-            if self.reasoning_effort and self.reasoning_effort != "default":
-                kwargs["reasoning_effort"] = self.reasoning_effort
+            if self.openai_reasoning_family:
+                if self.reasoning_effort and self.reasoning_effort != "default":
+                    kwargs["reasoning_effort"] = self.reasoning_effort
+            else:
+                kwargs["temperature"] = self.temperature
         else:
             extra_body: dict[str, Any] = {}
             if self.fallback_models:
@@ -195,10 +205,16 @@ class OpenRouterHermesClient:
         content = response.choices[0].message.content or ""
         usage = getattr(response, "usage", None)
         details = getattr(usage, "completion_tokens_details", None) if usage else None
+        prompt_details = getattr(usage, "prompt_tokens_details", None) if usage else None
+        # cached_tok is the prefix-cache hit: it should cover the shared catalog on
+        # every call after the first. A run of zeros means the prefix drifted.
         logger.info(
-            "PERF agent=%s %.1fs prompt_tok=%s completion_tok=%s reasoning_tok=%s out_chars=%d finish=%s",
-            agent_name, elapsed,
-            getattr(usage, "prompt_tokens", "?"), getattr(usage, "completion_tokens", "?"),
+            "PERF agent=%s %.1fs model=%s prompt_tok=%s cached_tok=%s completion_tok=%s "
+            "reasoning_tok=%s out_chars=%d finish=%s",
+            agent_name, elapsed, self.model,
+            getattr(usage, "prompt_tokens", "?"),
+            getattr(prompt_details, "cached_tokens", 0) if prompt_details else "?",
+            getattr(usage, "completion_tokens", "?"),
             getattr(details, "reasoning_tokens", "?") if details else "?",
             len(content), response.choices[0].finish_reason,
         )
@@ -395,6 +411,38 @@ def transcript_entry(
     return {"agent": agent, "message": message, "a2a": envelope}
 
 
+# Prefix caching. OpenAI reuses an identical leading span of >=1024 tokens across
+# calls, which cuts prefill latency by roughly half -- but only if that span is
+# byte-identical and comes FIRST. The catalog is the one large thing every agent
+# carries, so it lives here, in a system message shared verbatim by all of them,
+# with everything variable (task id, upstream results, role, instruction) moved
+# into the user turn. Putting the per-agent role in the system message, or the
+# a2a_task with its fresh uuid anywhere near the front, defeats the cache.
+SHARED_AGENT_SYSTEM = (
+    "You are one agent inside the AgentMart agent ecosystem. Work only from the data "
+    "you are given. Never invent a SKU, price, stock figure, delivery option, or date. "
+    "Your reader is another agent, not the customer: answer in compact facts, with no "
+    "greeting, preamble, or closing offer.\n\n"
+    "AgentMart product listing:\n{listing}"
+)
+
+
+def shared_agent_system(state: AgentMartState) -> str:
+    """The cacheable prefix: identical for every agent on every run of one catalog."""
+    return SHARED_AGENT_SYSTEM.format(listing=state.get("product_listing", ""))
+
+
+def worker_model(state: AgentMartState) -> str | None:
+    """Model for the read-only worker agents (shopping/pricing/inventory/fulfillment).
+
+    They never call tools and never speak to the customer, so a fast non-reasoning
+    model suits them while the customer-facing hops keep the primary model.
+    """
+    return (os.getenv("AGENTMART_WORKER_MODEL")
+            or (model_config_from_state(state) or {}).get("worker_model")
+            or None)
+
+
 def make_agent_node(
     agent: AgentName,
     system_prompt: str,
@@ -414,8 +462,15 @@ def make_agent_node(
         client = OpenRouterHermesClient(
             dry_run=state.get("dry_run", False),
             model_config=model_config_from_state(state),
+            model_override=worker_model(state),
         )
-        result = client.complete(agent, system_prompt, prompt_builder(state))
+        # The agent's own role rides in the user turn so the system message stays
+        # identical across agents and the shared prefix can be cached.
+        result = client.complete(
+            agent,
+            shared_agent_system(state),
+            f"Your role: {system_prompt}\n\n{prompt_builder(state)}",
+        )
         done = emit_envelope(
             state,
             sender=agent,
@@ -508,10 +563,10 @@ shopping_agent_node = make_agent_node(
     lambda state: json.dumps(
         {
             "a2a_task": state["a2a_task"],
-            "product_listing": state.get("product_listing", ""),
             "instruction": (
                 "Pick 3 candidate SKUs from the product listing and give a short reason for each. "
-                "Cite the SKU and price exactly as listed. Do not invent products."
+                "Cite the SKU and price exactly as listed. Do not invent products. "
+                "One line per SKU, 300 characters total or fewer."
             ),
         },
         indent=2,
@@ -528,10 +583,10 @@ pricing_agent_node = make_agent_node(
         {
             "a2a_task": state["a2a_task"],
             "shopping_result": state.get("shopping_result", "(agent not on this path)"),
-            "product_listing": state.get("product_listing", ""),
             "instruction": (
                 "Rank the candidates by value using the listed price and list price. "
-                "Note any discount, budget overrun, or price risk."
+                "Note any discount, budget overrun, or price risk. "
+                "One line per candidate plus at most one risk line, 400 characters or fewer."
             ),
         },
         indent=2,
@@ -549,10 +604,10 @@ inventory_agent_node = make_agent_node(
             "a2a_task": state["a2a_task"],
             "shopping_result": state.get("shopping_result", "(agent not on this path)"),
             "pricing_result": state.get("pricing_result", "(agent not on this path)"),
-            "product_listing": state.get("product_listing", ""),
             "instruction": (
                 "Use the stock lines in the product listing. Mark which options are in stock now, "
-                "which depend on a restock, and what needs confirmation."
+                "which depend on a restock, and what needs confirmation. "
+                "One line per SKU, 400 characters or fewer."
             ),
         },
         indent=2,
@@ -569,10 +624,9 @@ fulfillment_agent_node = make_agent_node(
         {
             "a2a_task": state["a2a_task"],
             "inventory_result": state.get("inventory_result", "(agent not on this path)"),
-            "product_listing": state.get("product_listing", ""),
             "instruction": (
                 "Recommend a fulfillment path using the delivery methods, ETAs, and costs in the listing. "
-                "Mention which warehouse ships the item."
+                "Mention which warehouse ships the item. 400 characters or fewer."
             ),
         },
         indent=2,
