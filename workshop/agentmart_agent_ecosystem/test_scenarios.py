@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -424,6 +425,29 @@ def check_batched_workers() -> list[Check]:
     return checks
 
 
+# Documentation drift. WALKTHROUGH.md cites `symbol` (file.py:line); those line
+# numbers went stale the first time the file grew, and a walkthrough that points at
+# the wrong line is worse than one that points at nothing.
+DOC_REF_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)`\s*\((a2a_server\.py|agentmart_ecosystem\.py):(\d+)\)")
+
+
+def check_doc_refs() -> list[Check]:
+    """Every `symbol` (file:line) in WALKTHROUGH.md points at that symbol."""
+    here = Path(__file__).parent
+    doc = here / "WALKTHROUGH.md"
+    if not doc.exists():
+        return [expect("WALKTHROUGH.md exists", False)]
+    sources = {name: (here / name).read_text().splitlines()
+               for name in ("a2a_server.py", "agentmart_ecosystem.py")}
+    refs = {(s, f, int(n)) for s, f, n in DOC_REF_RE.findall(doc.read_text())}
+    checks: list[Check] = [expect("WALKTHROUGH.md carries line references", bool(refs))]
+    for symbol, filename, line in sorted(refs, key=lambda r: (r[1], r[2])):
+        lines = sources[filename]
+        actual = lines[line - 1] if 0 < line <= len(lines) else ""
+        checks.append(expect(f"{filename}:{line} defines {symbol}", symbol in actual))
+    return checks
+
+
 def run_scenario(scenario: Scenario, dry_run: bool, verbose: bool) -> list[Check]:
     result = run_agentmart(
         scenario.request,
@@ -470,6 +494,7 @@ def main() -> int:
         print(f"{'intent-routing':<24} {'(routing)':<17} 14 phrasings, human and agent-generated")
         print(f"{'pipeline-inputs':<24} {'(pipeline)':<17} each agent receives its upstream results")
         print(f"{'batched-workers':<24} {'(batching)':<17} one call for the worker hops, inputs intact")
+        print(f"{'doc-refs':<24} {'(docs)':<17} WALKTHROUGH.md line refs match the code")
         return 0
 
     dry_run = not args.live
@@ -477,10 +502,10 @@ def main() -> int:
     run_chained = True
     if args.scenario:
         names = set(args.scenario)
-        unknown = names - set(SCENARIOS_BY_NAME) - {"buy-then-checkout", "intent-routing", "pipeline-inputs", "batched-workers"}
+        unknown = names - set(SCENARIOS_BY_NAME) - {"buy-then-checkout", "intent-routing", "pipeline-inputs", "batched-workers", "doc-refs"}
         if unknown:
             print(f"Unknown scenario(s): {', '.join(sorted(unknown))}", file=sys.stderr)
-            print(f"Available: {', '.join(SCENARIOS_BY_NAME)}, buy-then-checkout, intent-routing, pipeline-inputs, batched-workers", file=sys.stderr)
+            print(f"Available: {', '.join(SCENARIOS_BY_NAME)}, buy-then-checkout, intent-routing, pipeline-inputs, batched-workers, doc-refs", file=sys.stderr)
             return 2
         selected = [s for s in SCENARIOS if s.name in names]
         run_chained = "buy-then-checkout" in names
@@ -490,6 +515,16 @@ def main() -> int:
     print("Payments are simulated; no payment processor is contacted.")
 
     results: list[bool] = []
+    if not args.scenario or "doc-refs" in set(args.scenario):
+        results.append(
+            report(
+                "doc-refs",
+                "WALKTHROUGH.md line references still point at their symbols",
+                "A walkthrough pointing at the wrong line is worse than one pointing nowhere.",
+                check_doc_refs(),
+            )
+        )
+
     if not args.scenario or "batched-workers" in set(args.scenario):
         results.append(
             report(

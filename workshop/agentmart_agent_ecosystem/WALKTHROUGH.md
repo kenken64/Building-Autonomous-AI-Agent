@@ -33,9 +33,9 @@ separates them properly.
 
 ---
 
-## 1. The state that flows through the graph — line 63
+## 1. The state that flows through the graph
 
-`AgentMartState` is a `TypedDict` carrying everything a hop might need: the
+`AgentMartState` (agentmart_ecosystem.py:63) is a `TypedDict` carrying everything a hop might need: the
 request, the intent, the product listing, each agent's result, the draft order,
 and two accumulating lists.
 
@@ -51,25 +51,25 @@ how to merge writes to the same key instead of rejecting them. Because of it,
 nodes return **deltas** — `{"transcript": [one_entry]}` — never the whole list.
 Returning the full list under a reducer would concatenate it with itself.
 
-## 2. The A2A envelope — line 90
+## 2. The A2A envelope
 
-`A2AEnvelope` is the teaching artifact: one record per hop, carrying
+`A2AEnvelope` (agentmart_ecosystem.py:91) is the teaching artifact: one record per hop, carrying
 `task_id`, `sender`, `recipient`, `intent`, `payload`, `state`, and a
 `correlation_id` shared by every hop of one request.
 
-`emit_envelope` (line 368) builds one and **returns it without touching state**.
+`emit_envelope` (agentmart_ecosystem.py:373) builds one and **returns it without touching state**.
 It used to append to `state["a2a_log"]` directly. That was fine while hops ran in
 sequence and became a bug the moment they did not, so it is pure now and callers
 hand the envelopes back as a delta.
 
 Lifecycle: `proposed → accepted → in_progress → completed | failed`.
 
-## 3. The model client — line 123
+## 3. The model client
 
-`OpenRouterHermesClient` resolves settings in one order and shapes the request per
+`OpenRouterHermesClient` (agentmart_ecosystem.py:124) resolves settings in one order and shapes the request per
 endpoint. Two things to notice.
 
-**Endpoint detection** (line ~150). `openai_native` is true when the base URL is
+**Endpoint detection.** `openai_native` is true when the base URL is
 OpenAI's own. It matters because the two endpoints disagree: OpenAI wants
 `max_completion_tokens`, rejects any temperature but its default on the gpt-5.6
 family, and takes `reasoning_effort` as a top-level parameter. OpenRouter accepts
@@ -83,7 +83,7 @@ the body is read — they make a slow call look fast and the time appear to vani
 afterwards. `cached_tok` is the prefix-cache hit; a column of zeros means the
 shared prefix has drifted.
 
-## 4. Intent routing — lines 251–335
+## 4. Intent routing
 
 `INTENT_RULES` is an ordered list of `(intent, regex)`. First match wins.
 Deterministic on purpose: the agents are the model-driven part, the routing is
@@ -99,7 +99,7 @@ Read the order carefully — it encodes hard-won distinctions:
 4. Weaker payment wording, only once a status reading is ruled out.
 5. `buy` only when intentional: "wants to buy" is intent, "where to buy" is advice.
 
-`strip_prohibitions` (line 313) runs **before** any rule. A remote agent states
+`strip_prohibitions` (agentmart_ecosystem.py:318) runs **before** any rule. A remote agent states
 its guardrails inline — "do not charge or capture payment" — and those clauses
 name the exact capability they forbid. Without the strip, a prohibition routes
 straight to the Payment Agent. That is not hypothetical: it once settled a
@@ -109,19 +109,19 @@ The fallback at the end of `classify_intent` returns `order_status` rather than
 `product_advice` when the text names an order id, so an order question never
 wakes Shopping and Pricing.
 
-## 5. The shared, cacheable prefix — lines 421–433
+## 5. The shared, cacheable prefix
 
-`SHARED_AGENT_SYSTEM` holds the catalog and is **identical for every worker
+`SHARED_AGENT_SYSTEM` (agentmart_ecosystem.py:426) holds the catalog and is **identical for every worker
 agent**. OpenAI reuses an identical leading span across calls, halving prefill
 latency, but only if it comes first and is byte-identical.
 
-That is why the per-agent role travels in the *user* turn (line ~470) rather than
+That is why the per-agent role travels in the *user* turn rather than
 the system message, and why the `a2a_task` — which carries a fresh uuid — is
 nowhere near the front. Both would break the cache.
 
-## 6. The worker agents — lines 446–637
+## 6. The worker agents
 
-`make_agent_node` is a factory. Each worker gets a role, a prompt builder, an
+`make_agent_node` (agentmart_ecosystem.py:451) is a factory. Each worker gets a role, a prompt builder, an
 output key and a capability name, and returns a delta:
 
 ```python
@@ -155,33 +155,54 @@ if a hand-off is empty.
 
 ## 7. The customer-facing hops
 
-**`hermes_myshopper_node`** (line 491) is the lab's own buying agent: it
+**`hermes_myshopper_node`** (agentmart_ecosystem.py:496) is the lab's own buying agent: it
 classifies, builds the opening `proposed` envelope, resolves the SKU or order id,
 and loads the order book when the intent needs it. When a *real* Hermes calls in
 over A2A this node runs anyway — two buying agents in series. That is deliberate:
 the hand-off is what the workshop demonstrates.
 
-**`order_agent_node`** (line 723) is the only hop that writes. On a
+**`order_agent_node`** (agentmart_ecosystem.py:816) is the only hop that writes. On a
 `purchase_intent` it calls `create_draft_order` **before** the model speaks, so
 the order id in the answer is a real row, not a generated string. Its system
-prompt (line 639) forbids inventing an order id, tracking reference, amount or
+prompt (agentmart_ecosystem.py:732) forbids inventing an order id, tracking reference, amount or
 date, and asks for compact structured facts — Hermes rewrites them into prose for
 the chat, so framing here is wasted work.
 
-**`payment_agent_node`** (line 806) settles a **simulated** payment: it writes
+**`payment_agent_node`** (agentmart_ecosystem.py:899) settles a **simulated** payment: it writes
 rows through `checkout_and_pay` and contacts no processor. `sim_auth_*` references
 are local.
 
-## 8. Building and running the graph — lines 870–998
+## 7b. Batching the worker hops — optional
 
-`INTENT_PATHS` maps each intent to its agent sequence. `route_from_hermes` picks
+`batched_workers_node` (agentmart_ecosystem.py:688) runs every worker on the
+intent's path in **one** model call, and `effective_path`
+(agentmart_ecosystem.py:990) collapses the path when `batch_workers` is set.
+`split_sections` (agentmart_ecosystem.py:670) parses the reply back into the
+individual `*_result` keys, so the Order Agent receives exactly what it would
+have.
+
+Worth understanding why this is safe where concurrency was not. Parallel branches
+each read a **stale state snapshot**, so Inventory never saw Pricing's ranking.
+One batched call puts the whole chain in a **single context**, so the hand-off is
+stronger, not weaker.
+
+The transcript records one hop. Synthesising four entries from a single call would
+make the replay lie about what ran.
+
+Off by default: four agents negotiating over A2A becoming one prompt with four
+headings is a real loss for a workshop about agent ecosystems. Measured
+13.3s -> 8.4s on `product_advice`.
+
+## 8. Building and running the graph
+
+`INTENT_PATHS` (agentmart_ecosystem.py:963) maps each intent to its agent sequence. `route_from_hermes` picks
 the first hop; `_next_after` follows the path and falls off to `END`.
 `build_graph` wires conditional edges from every node to every other, and the
 routers decide.
 
-`run_agentmart` (line 974) assembles the initial state — including
+`run_agentmart` (agentmart_ecosystem.py:1084) assembles the initial state — including
 `classify_intent` and `load_product_listing` — invokes the graph, and passes the
-result through `normalize_ordering` (line 954), which sorts the transcript and
+result through `normalize_ordering` (agentmart_ecosystem.py:1064), which sorts the transcript and
 A2A log into the declared path order. With a sequential pipeline they already
 arrive in order, so it is a guard rather than a necessity.
 
@@ -192,16 +213,16 @@ arrive in order, so it is a guard rather than a necessity.
 Without this file the lab's A2A never leaves the process and no outside agent can
 call it.
 
-**Discovery** — `build_agent_card` (line 184) advertises every AgentMart
+**Discovery** — `build_agent_card` (a2a_server.py:185) advertises every AgentMart
 capability as an A2A skill tagged with its owning agent, served at
 `/.well-known/agent-card.json`.
 
-**Transport** — `do_POST` (line ~310) accepts `SendMessage` and two pre-1.0
+**Transport** — `do_POST` accepts `SendMessage` and two pre-1.0
 aliases, pulls the text out of the message parts, and returns a v1.0 `Task` whose
 `artifacts[0]` carries the answer. A graph failure becomes `TASK_STATE_FAILED` —
 a failed task, not a transport error.
 
-**The cache** — lines 72–116. Only `product_advice` and `browse_catalog` are
+**The cache.** `CACHEABLE_INTENTS` (a2a_server.py:72) — only `product_advice` and `browse_catalog` are
 eligible. `purchase_intent` writes a draft and `checkout_payment` captures a
 payment, so replaying either would report work that never happened; `order_status`
 is read-only but goes stale the moment any order moves. After a mutating intent
@@ -240,10 +261,10 @@ gateway never pays.
 
 | Question | Look at |
 | --- | --- |
-| Why is a prohibition not an instruction? | `strip_prohibitions`, line 313 |
-| Why is the catalog in the system message? | `SHARED_AGENT_SYSTEM`, line 421 |
-| Why do nodes return deltas? | the reducers on `AgentMartState`, line 63 |
-| Why is `emit_envelope` pure? | line 368 |
+| Why is a prohibition not an instruction? | `strip_prohibitions` (agentmart_ecosystem.py:318) |
+| Why is the catalog in the system message? | `SHARED_AGENT_SYSTEM` (agentmart_ecosystem.py:426) |
+| Why do nodes return deltas? | the reducers on `AgentMartState` (agentmart_ecosystem.py:63) |
+| Why is `emit_envelope` pure? | `emit_envelope` (agentmart_ecosystem.py:373) |
 | Why is the path sequential? | README, "The arrows are load-bearing" |
-| Why is the model client endpoint-aware? | `openai_native`, line ~150 |
-| Why can't a checkout be cached? | `CACHEABLE_INTENTS`, `a2a_server.py` line 72 |
+| Why is the model client endpoint-aware? | `OpenRouterHermesClient` (agentmart_ecosystem.py:124) |
+| Why can't a checkout be cached? | `CACHEABLE_INTENTS` (a2a_server.py:72) |

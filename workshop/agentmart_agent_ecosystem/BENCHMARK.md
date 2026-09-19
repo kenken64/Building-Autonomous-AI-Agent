@@ -233,6 +233,36 @@ Only the gpt-5.6 family carries this restriction. On the same key, `gpt-5`,
 `gpt-5-mini`, `gpt-4.1` and `gpt-4o` all accept tools on `/v1/chat/completions`
 with no special handling, and would need no `extra_body` entry.
 
+## 9. Where the time goes now
+
+Measured over the A2A wire, gpt-5.6-luna direct to OpenAI, after prefix caching,
+compact worker output, the response cache and optional batching.
+
+| Intent | Default | `--batch-workers` | Repeat |
+| --- | ---: | ---: | ---: |
+| `order_status` | 5.4s | 4.9s | 3.8-4.2s |
+| `browse_catalog` | 10.3s | 6.6s | **0.00s** |
+| `product_advice` | 13.3s | 8.4s | **0.00s** |
+| `purchase_intent` | 8.9s | 5.6s | 6.0-8.5s |
+| `checkout_payment` | 5.7s | 5.6s | 6.1-6.5s |
+
+`product_advice` started this project at ~170s.
+
+**The transport is not a factor and never was.** The A2A server's own round trip,
+measured over 30 samples:
+
+| | median | min | p95 |
+| --- | ---: | ---: | ---: |
+| `GET /health` | 0.39ms | 0.24ms | 1.03ms |
+| `GET /.well-known/agent-card.json` | 0.36ms | 0.28ms | 0.61ms |
+| `POST /` (cached SendMessage) | 0.42ms | 0.36ms | 0.53ms |
+
+That is ~0.003% of a cold request, and it sustains ~900 req/s at 60 concurrent
+threads. Rewriting it in a faster language would recover about 0.37ms out of
+~10,000ms -- a single run-to-run swing in one agent's latency is ten thousand
+times larger. The only thing that moves this number is making fewer or shorter
+model calls, which is what every entry in this document does.
+
 ## Caveats
 
 - **n = 1 per cell.** No repeats, no confidence intervals. Latency especially

@@ -117,11 +117,20 @@ No network, no Hermes. Proves routing, the order book and the agent prompts.
 # where a request saying "do not capture payment" routes to the Payment Agent.
 ./.venv/bin/python test_scenarios.py -s intent-routing
 
+# Each agent still receives the upstream result it reads
+./.venv/bin/python test_scenarios.py -s pipeline-inputs
+
+# Batching collapses the worker hops without starving the Order Agent
+./.venv/bin/python test_scenarios.py -s batched-workers
+
+# WALKTHROUGH.md's line references still point at their symbols
+./.venv/bin/python test_scenarios.py -s doc-refs
+
 # The same suite against the real model
 ./.venv/bin/python test_scenarios.py --live
 ```
 
-**Pass:** `9/9 scenarios passed`.
+**Pass:** `12/12 scenarios passed`.
 
 ### Per-intent prompts
 
@@ -156,6 +165,32 @@ Prints the full state as JSON: `transcript`, `a2a_log`, `intent`, `draft_order`.
 
 **Watch for:** every transcript entry must have a non-empty `message`. Empty
 replies mean the token budget is being eaten by reasoning — see Troubleshooting.
+
+---
+
+## Performance reference
+
+Measured over the A2A wire, gpt-5.6-luna on OpenAI direct. Use these as the shape,
+not as promises: per-hop latency swings run to run.
+
+| Intent | Default | `--batch-workers` | Repeat |
+| --- | ---: | ---: | ---: |
+| `order_status` | 5.4s | 4.9s | 3.8-4.2s |
+| `browse_catalog` | 10.3s | 6.6s | **0.00s** |
+| `product_advice` | 13.3s | 8.4s | **0.00s** |
+| `purchase_intent` | 8.9s | 5.6s | 6.0-8.5s |
+| `checkout_payment` | 5.7s | 5.6s | 6.1-6.5s |
+
+Three things to read off it:
+
+- **Batching only helps where workers run.** `checkout_payment` is unchanged
+  because no worker agent is on its path, and `order_status` barely moves because
+  only the Order Agent runs. The three worker-heavy intents gain ~1.6x.
+- **Only the two read-only intents repeat instantly.** `purchase_intent` and
+  `checkout_payment` write to the order book and `order_status` goes stale the
+  moment one does, so all three re-run every time by design.
+- **The server itself is not in the picture.** Its own round trip is ~0.4ms
+  against 5,000-13,000ms of model time.
 
 ---
 

@@ -92,6 +92,21 @@ A graph failure returns `TASK_STATE_FAILED` — a failed task, not a transport e
 
 ---
 
+## 2b. Server behaviour a caller will notice
+
+**Caching.** Repeats of a `product_advice` or `browse_catalog` question return in
+~0.04s with `\n[cached]` appended to the text. Nothing that writes is ever
+cached: `purchase_intent` drafts an order, `checkout_payment` captures a
+simulated payment, and `order_status` goes stale the moment either runs. A
+mutating call clears the cache. Disable with `--no-cache`.
+
+**Batching.** With `--batch-workers` the server runs every worker agent in one
+model call. The answer and the SKUs are the same; the hop trailer shows
+`batched_workers` in place of the individual worker hops, and roughly 1.6x less
+time on worker-heavy intents.
+
+Neither changes the wire format. A caller sees an ordinary `Task` either way.
+
 ## 3. Capability map
 
 Sixteen capabilities across six agents. These are the `skills[].id` values on the
