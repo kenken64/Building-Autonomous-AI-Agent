@@ -94,14 +94,21 @@ Each wakes a different set of agents — that is the routing teaching point.
 | `What is my order status?` | `order_status` | order |
 | `Where is my order AM-ORD-20260912-0002?` | `order_status` | order (scoped to one order) |
 | `Where is my order AM-ORD-9999-9999?` | `order_status` | order (reports "not found", must not crash) |
-| `List me the available products.` | `browse_catalog` | shopping, **pricing ‖ inventory**, order |
-| `Find me wireless earbuds under $120 with good battery life.` | `product_advice` | shopping, **pricing ‖ inventory ‖ fulfillment**, order |
-| `I want to buy this AM-EAR-1002.` | `purchase_intent` | **inventory ‖ fulfillment**, order |
-| `Checkout and pay for my order.` | `checkout_payment` | order, payment |
+| `List me the available products.` | `browse_catalog` | shopping → pricing → inventory → order |
+| `Find me wireless earbuds under $120 with good battery life.` | `product_advice` | shopping → pricing → inventory → fulfillment → order |
+| `I want to buy this AM-EAR-1002.` | `purchase_intent` | inventory → fulfillment → order |
+| `Checkout and pay for my order.` | `checkout_payment` | order → payment |
 
-Bold groups run concurrently in one LangGraph superstep. The transcript is
-re-sorted into declared path order afterwards, so the replay stays deterministic
-even though the work overlapped.
+The arrows are load-bearing: each hop reads the previous one's output. Inventory
+reads Pricing's ranking, Fulfillment reads Inventory's stock findings, and the
+Order Agent reads all three.
+
+Running Pricing, Inventory and Fulfillment concurrently was tried and reverted. It
+saved about 8s, but both downstream agents then received
+`"(agent not on this path)"` where their upstream input belonged. The Order Agent
+still saw all three at the join, so the final answer looked right and this suite
+still passed — the checks assert routing and grounding, not that each agent got
+its input. If you reintroduce the fan-out, assert on the agent prompts too.
 
 ```bash
 ./.venv/bin/python agentmart_ecosystem.py "Find me wireless earbuds under \$120 with good battery life."

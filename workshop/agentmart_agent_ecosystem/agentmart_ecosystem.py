@@ -804,48 +804,30 @@ INTENT_PATHS: dict[str, tuple[str, ...]] = {
 }
 
 
-# Pricing, Inventory and Fulfillment all read the Shopping Agent's shortlist and
-# none reads another's output, so running them in sequence only bought latency.
-# They now share one superstep and the Order Agent joins on all of them.
-PARALLEL_AGENTS = frozenset({"pricing_agent", "inventory_agent", "fulfillment_agent"})
+# The intent path is a pipeline, not a fan-out: the Inventory Agent reads the
+# Pricing Agent's ranking and the Fulfillment Agent reads the Inventory Agent's
+# stock findings. Running the three concurrently was tried and reverted -- it cut
+# roughly 8s off a run, but both downstream agents then received
+# "(agent not on this path)" where their upstream input should have been, and
+# reasoned without it. The Order Agent still saw all three at the join, so the
+# final answer looked correct and the scenario suite still passed, which is what
+# made the regression easy to miss. Each hop building on the last is the point.
 
 
-def _stages(intent: str) -> list[str | list[str]]:
-    """The intent's path, with consecutive independent agents grouped into one stage.
-
-    product_advice becomes:
-        shopping_agent -> [pricing, inventory, fulfillment] -> order_agent
-    """
-    stages: list[str | list[str]] = []
-    for agent in INTENT_PATHS[intent]:
-        if agent in PARALLEL_AGENTS and stages and isinstance(stages[-1], list):
-            stages[-1].append(agent)
-        elif agent in PARALLEL_AGENTS:
-            stages.append([agent])
-        else:
-            stages.append(agent)
-    return stages
+def route_from_hermes(state: AgentMartState) -> str:
+    """First AgentMart hop for this intent."""
+    return INTENT_PATHS[state.get("intent", "product_advice")][0]
 
 
-def route_from_hermes(state: AgentMartState) -> str | list[str]:
-    """First AgentMart stage for this intent. A list fans out in one superstep."""
-    return _stages(state.get("intent", "product_advice"))[0]
+def _next_after(node: str) -> Callable[[AgentMartState], str]:
+    """Follow this intent's path; fall off to END when the node is its last hop."""
 
-
-def _next_after(node: str) -> Callable[[AgentMartState], str | list[str]]:
-    """Follow this intent's stages; fall off to END when the stage is the last one.
-
-    Every member of a parallel stage returns the same next stage, which is what makes
-    the Order Agent a join: LangGraph runs it once, after the whole stage completes.
-    """
-
-    def router(state: AgentMartState) -> str | list[str]:
-        stages = _stages(state.get("intent", "product_advice"))
-        for index, stage in enumerate(stages):
-            members = stage if isinstance(stage, list) else [stage]
-            if node in members:
-                return stages[index + 1] if index + 1 < len(stages) else END
-        return END
+    def router(state: AgentMartState) -> str:
+        path = INTENT_PATHS[state.get("intent", "product_advice")]
+        if node not in path:
+            return END
+        index = path.index(node)
+        return path[index + 1] if index + 1 < len(path) else END
 
     return router
 
@@ -890,12 +872,12 @@ def _hop_agent(hop: dict[str, Any]) -> str:
 
 
 def normalize_ordering(result: AgentMartState) -> AgentMartState:
-    """Re-sort the parallel stage's rows back into the intent's declared path order.
+    """Sort the transcript and A2A log into the intent's declared path order.
 
-    A superstep finishes in whatever order the network returns, which would make the
-    transcript non-deterministic. Sorting by the intent path keeps the replay stable
-    and the A2A log readable; the sort is stable, so each agent's accepted/completed
-    pair keeps its relative order. The work still happened concurrently.
+    With a sequential pipeline the rows already arrive in order, so this is a guard
+    rather than a necessity: it keeps the replay deterministic if a future change
+    ever runs hops concurrently again. The sort is stable, so each agent's
+    accepted/completed envelope pair keeps its relative order.
     """
     order = ["hermes_myshopper", *INTENT_PATHS[result.get("intent", "product_advice")]]
     rank = {name: index for index, name in enumerate(order)}

@@ -43,18 +43,55 @@ flowchart TD
 Hermes classifies the customer message, then only the agents that intent needs
 are woken. A status question does not wake the whole ecosystem.
 
-| Customer intent | Example message | Agents woken |
+| Customer intent | Example message | Agent path |
 | --- | --- | --- |
 | `order_status` | "What is my order status?" | Order |
-| `browse_catalog` | "List me the available products." | Shopping, Pricing, Inventory, Order |
-| `product_advice` | "Find me wireless earbuds under $120." | Shopping, Pricing, Inventory, Fulfillment, Order |
-| `purchase_intent` | "I want to buy this AM-EAR-1002." | Inventory, Fulfillment, Order |
-| `checkout_payment` | "Checkout and pay for my order." | Order, Payment |
+| `browse_catalog` | "List me the available products." | Shopping → Pricing → Inventory → Order |
+| `product_advice` | "Find me wireless earbuds under $120." | Shopping → Pricing → Inventory → Fulfillment → Order |
+| `purchase_intent` | "I want to buy this AM-EAR-1002." | Inventory → Fulfillment → Order |
+| `checkout_payment` | "Checkout and pay for my order." | Order → Payment |
 
 Routing is rule-based rather than model-driven, so a scenario run is
 reproducible and the assertions in `test_scenarios.py` mean something. The
 routing table lives in `INTENT_PATHS` (`agentmart_ecosystem.py`) and is mirrored
 in `hermes_a2a_config.json` under `intent_routing`.
+
+### The arrows are load-bearing
+
+The path is a **pipeline, not a fan-out**. Each hop reads the previous one's
+output:
+
+| Agent | Reads |
+| --- | --- |
+| Shopping | the A2A task and the product listing |
+| Pricing | `shopping_result` |
+| Inventory | `shopping_result`, `pricing_result` |
+| Fulfillment | `inventory_result` |
+| Order | `shopping_result`, `pricing_result`, `inventory_result` |
+
+Pricing, Inventory and Fulfillment look independent, and at one point this lab
+ran them concurrently in a single LangGraph superstep. It was about 8s faster and
+it was wrong: Inventory received `"(agent not on this path)"` where Pricing's
+ranking belonged, and Fulfillment the same where Inventory's stock findings
+belonged. Both reasoned without their input.
+
+What makes this worth a section is how quietly it passed. The Order Agent still
+received all three results at the join, so the customer-facing answer read
+perfectly, no error was raised, and the whole scenario suite stayed green — the
+checks asserted which agents ran and whether SKUs were real, never whether an
+agent got what it asked for.
+
+The fan-out has been reverted. `test_scenarios.py` now has a `pipeline-inputs`
+check that reads the prompts themselves and fails if any hand-off is empty:
+
+```bash
+python test_scenarios.py -s pipeline-inputs
+```
+
+Against the concurrent version it reports 5/7, naming the two broken hand-offs.
+If you ever reintroduce the fan-out — it is a reasonable exercise — make the
+downstream agents genuinely standalone on `product_listing` first, and keep this
+check honest by updating what each agent declares it reads.
 
 ## Files
 
@@ -315,7 +352,8 @@ python agentmart_ecosystem.py "Find me wireless earbuds under $120 with good bat
 1. Hermes/MyShopper receives the customer request from a chat channel.
 2. Hermes classifies the intent and creates an A2A task envelope addressed to the
    AgentMart ecosystem. Every later hop reuses that envelope's `correlation_id`.
-3. The router wakes only the agents that intent needs (see the table above).
+3. The router wakes only the agents that intent needs (see the table above),
+   in order, each reading the previous hop's result.
 4. Each agent hop appends its own envelope to `a2a_log`, moving through the
    `proposed -> accepted -> in_progress -> completed` lifecycle from Part 7.
 5. The Order Agent answers from the order book, or creates a draft order.

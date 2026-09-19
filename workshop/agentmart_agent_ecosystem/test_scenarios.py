@@ -340,6 +340,55 @@ def check_routing() -> list[Check]:
     return checks
 
 
+# Pipeline-input regression. The intent path is a chain: Inventory reads Pricing's
+# ranking, Fulfillment reads Inventory's stock findings. When those three were once
+# run concurrently, both downstream agents silently received
+# "(agent not on this path)" instead — and every check here still passed, because
+# the Order Agent saw all three at the join and the final answer looked right.
+# These assertions read the prompts themselves, so the hand-off cannot break quietly.
+UPSTREAM_INPUTS: dict[str, tuple[str, ...]] = {
+    "pricing_agent": ("shopping_result",),
+    "inventory_agent": ("shopping_result", "pricing_result"),
+    "fulfillment_agent": ("inventory_result",),
+    "order_agent": ("shopping_result", "pricing_result", "inventory_result"),
+}
+NOT_ON_PATH = "(agent not on this path)"
+
+
+def check_pipeline_inputs() -> list[Check]:
+    """Every agent actually receives the upstream results its prompt asks for."""
+    import agentmart_ecosystem as ae
+
+    seen: dict[str, dict[str, Any]] = {}
+    original = ae.OpenRouterHermesClient.complete
+
+    def spy(self, agent, system_prompt, user_prompt):  # noqa: ANN001
+        try:
+            seen[agent] = json.loads(user_prompt)
+        except (TypeError, ValueError):
+            seen[agent] = {}
+        return original(self, agent, system_prompt, user_prompt)
+
+    ae.OpenRouterHermesClient.complete = spy
+    try:
+        ae.run_agentmart("Find me wireless earbuds under $120 with good battery life.", dry_run=True)
+    finally:
+        ae.OpenRouterHermesClient.complete = original
+
+    checks: list[Check] = []
+    for agent, required in UPSTREAM_INPUTS.items():
+        payload = seen.get(agent)
+        if payload is None:
+            checks.append(expect(f"{agent} ran", False))
+            continue
+        for key in required:
+            value = payload.get(key)
+            checks.append(expect(
+                f"{agent} received {key}",
+                isinstance(value, str) and value.strip() != "" and value != NOT_ON_PATH))
+    return checks
+
+
 def run_scenario(scenario: Scenario, dry_run: bool, verbose: bool) -> list[Check]:
     result = run_agentmart(
         scenario.request,
@@ -384,6 +433,7 @@ def main() -> int:
             print(f"{scenario.name:<24} {scenario.intent:<17} {scenario.request}")
         print(f"{'buy-then-checkout':<24} {'(chained)':<17} purchase a SKU, then settle that order")
         print(f"{'intent-routing':<24} {'(routing)':<17} 14 phrasings, human and agent-generated")
+        print(f"{'pipeline-inputs':<24} {'(pipeline)':<17} each agent receives its upstream results")
         return 0
 
     dry_run = not args.live
@@ -391,10 +441,10 @@ def main() -> int:
     run_chained = True
     if args.scenario:
         names = set(args.scenario)
-        unknown = names - set(SCENARIOS_BY_NAME) - {"buy-then-checkout", "intent-routing"}
+        unknown = names - set(SCENARIOS_BY_NAME) - {"buy-then-checkout", "intent-routing", "pipeline-inputs"}
         if unknown:
             print(f"Unknown scenario(s): {', '.join(sorted(unknown))}", file=sys.stderr)
-            print(f"Available: {', '.join(SCENARIOS_BY_NAME)}, buy-then-checkout, intent-routing", file=sys.stderr)
+            print(f"Available: {', '.join(SCENARIOS_BY_NAME)}, buy-then-checkout, intent-routing, pipeline-inputs", file=sys.stderr)
             return 2
         selected = [s for s in SCENARIOS if s.name in names]
         run_chained = "buy-then-checkout" in names
@@ -404,6 +454,16 @@ def main() -> int:
     print("Payments are simulated; no payment processor is contacted.")
 
     results: list[bool] = []
+    if not args.scenario or "pipeline-inputs" in set(args.scenario):
+        results.append(
+            report(
+                "pipeline-inputs",
+                "each agent receives the upstream results it reads",
+                "The path is a chain, not a fan-out: breaking a hand-off must fail loudly.",
+                check_pipeline_inputs(),
+            )
+        )
+
     if not args.scenario or "intent-routing" in set(args.scenario):
         results.append(
             report(

@@ -125,6 +125,12 @@ contradicts its own six-call run finishing in 29.5s, so treat it as provider
 routing variance rather than evidence. Cost figures come from published per-token
 pricing and are reliable; every latency figure here is a single sample and is not.
 
+> **Note on the numbers above.** They were measured while Pricing, Inventory and
+> Fulfillment ran concurrently. That fan-out has since been reverted — it dropped
+> each downstream agent's upstream input — so the chain is sequential again and
+> runs ~5s slower (23.4s vs 18.4s on gpt-5.6-luna). The relative ranking between
+> models is unaffected.
+
 ## 6. Why `OPENROUTER_MAX_TOKENS` must stay generous
 
 Reasoning models spend this budget *before* emitting a visible token. The lab
