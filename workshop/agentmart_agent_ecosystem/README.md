@@ -382,6 +382,11 @@ and the routing rule from `SOUL.md` installed. See `TESTING.md` for the full che
 ![Telegram: AgentMart returns a shortlist of seeded earbuds, then processes a purchase](screenshot/01-telegram-shortlist-and-buy.png)
 
 *"Ask agentmart to find me wireless earbuds under $120 with good battery life."*
+
+Naming the peer is no longer required — with the routing rule from `SOUL.md`
+installed, a bare *"Find me wireless earbuds under $120"* reaches AgentMart on its
+own. Naming it is still the reliable choice for a live demo, because the rule is a
+model instruction rather than a routing guarantee.
 fires `a2a_list` then `a2a_call`, and AgentMart answers with seeded SKUs — Aurora
 Buds Pro (`AM-EAR-1001`, $109, 32h battery) down to Tidal Mini Buds (`AM-EAR-1005`,
 $39), each with real stock counts and delivery options.

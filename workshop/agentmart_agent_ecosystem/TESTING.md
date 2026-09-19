@@ -70,11 +70,16 @@ Every model call logs its own duration, so the slowest hop is greppable rather
 than guessed at:
 
 ```bash
-# Server: one PERF line per agent, then the task total
-grep "PERF agent=" ~/.../a2a_live.log
+# Server: one PERF line per agent, then the task total. Written to a file by
+# default, so closing the terminal does not take the evidence with it.
+grep "PERF agent=" logs/agentmart-a2a.log
 #  PERF agent=pricing_agent 7.1s prompt_tok=2975 completion_tok=1003 reasoning_tok=341 ...
-grep "task done" ~/.../a2a_live.log
+grep "task done" logs/agentmart-a2a.log
 #  A2A task done: 6 hop(s) in 22.3s
+
+# Elsewhere, or stdout only:
+./.venv/bin/python a2a_server.py --log-file /tmp/agentmart.log
+./.venv/bin/python a2a_server.py --log-file -
 
 # CLI: same lines, without running the server
 ./.venv/bin/python agentmart_ecosystem.py --timing "Find me wireless earbuds under $120."

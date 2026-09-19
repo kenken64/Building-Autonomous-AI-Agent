@@ -258,7 +258,7 @@ arrive in order, so it is a guard rather than a necessity.
 Without this file the lab's A2A never leaves the process and no outside agent can
 call it.
 
-**Discovery** — `build_agent_card` (a2a_server.py:262) advertises every AgentMart
+**Discovery** — `build_agent_card` (a2a_server.py:265) advertises every AgentMart
 capability as an A2A skill tagged with its owning agent, served at
 `/.well-known/agent-card.json`.
 
@@ -267,7 +267,7 @@ aliases, pulls the text out of the message parts, and returns a v1.0 `Task` whos
 `artifacts[0]` carries the answer. A graph failure becomes `TASK_STATE_FAILED` —
 a failed task, not a transport error.
 
-**The cache.** `CACHEABLE_INTENTS` (a2a_server.py:75) — only `product_advice` and `browse_catalog` are
+**The cache.** `CACHEABLE_INTENTS` (a2a_server.py:78) — only `product_advice` and `browse_catalog` are
 eligible. `purchase_intent` writes a draft and `checkout_payment` captures a
 payment, so replaying either would report work that never happened; `order_status`
 is read-only but goes stale the moment any order moves. After a mutating intent
@@ -312,4 +312,4 @@ gateway never pays.
 | Why is `emit_envelope` pure? | `emit_envelope` (agentmart/state.py:113) |
 | Why is the path sequential? | README, "The arrows are load-bearing" |
 | Why is the model client endpoint-aware? | `OpenRouterHermesClient` (agentmart/client.py:38) |
-| Why can't a checkout be cached? | `CACHEABLE_INTENTS` (a2a_server.py:75) |
+| Why can't a checkout be cached? | `CACHEABLE_INTENTS` (a2a_server.py:78) |

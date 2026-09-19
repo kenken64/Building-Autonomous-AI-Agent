@@ -3,3 +3,4 @@
 __pycache__/
 *.pyc
 data/agentmart.db
+logs/

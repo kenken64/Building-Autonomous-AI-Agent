@@ -64,6 +64,9 @@ ERR_UNAUTHORIZED = -32050
 # ``SendMessage`` is the v1.0 method name; the pre-1.0 path style still shows up in the wild.
 SEND_METHODS = {"SendMessage", "message/send", "tasks/send"}
 
+# Beside the lab, not in a terminal's scrollback.
+DEFAULT_LOG_FILE = Path(__file__).with_name("logs") / "agentmart-a2a.log"
+
 # Response cache. A workshop demo asks the same question many times, and the whole
 # six-agent chain is deterministic given the same catalog, so replaying the stored
 # answer turns ~25s into single-digit milliseconds.
@@ -511,12 +514,28 @@ def main() -> None:
                         help="Seconds a cached answer stays valid (default 600).")
     parser.add_argument("--cache-size", type=int, default=128,
                         help="Maximum cached answers (default 128).")
+    parser.add_argument("--log-file", default=str(DEFAULT_LOG_FILE),
+                        help=f"Where the PERF and task lines are written "
+                             f"(default {DEFAULT_LOG_FILE.relative_to(Path(__file__).parent)}); "
+                             f"'-' for stdout only.")
     parser.add_argument("--verbose", action="store_true", help="Debug logging.")
     args = parser.parse_args()
 
+    # Logs go to a file by default, not just stdout. The per-hop PERF lines are the
+    # only record of where a request spent its time, and a terminal that gets closed
+    # takes them with it -- which is exactly what happened while this was being built.
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if args.log_file and args.log_file != "-":
+        log_path = Path(args.log_file)
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
+        except OSError as exc:
+            print(f"Could not open {log_path} for logging: {exc}", file=sys.stderr)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=handlers,
     )
 
     OPTIONS.update(
@@ -543,6 +562,8 @@ def main() -> None:
     server = ThreadingHTTPServer((args.host, args.port), A2AHandler)
     base = f"http://{args.host}:{args.port}"
     logger.info("AgentMart A2A server on %s", base)
+    if args.log_file and args.log_file != "-":
+        logger.info("Logging to %s", args.log_file)
     logger.info("Agent Card: %s/.well-known/agent-card.json", base)
     logger.info("Auth: %s | dry-run: %s", "bearer token" if OPTIONS["token"] else "none (localhost)", args.dry_run)
     logger.info("Workers: %s", "BATCHED into one call per task"
