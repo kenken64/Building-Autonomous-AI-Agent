@@ -94,7 +94,7 @@ for the full walkthrough, including how to edit and re-seed the product catalog.
 | Path | Contents |
 | --- | --- |
 | `workshop/` | Hands-on labs and the `setup.sh` environment script. |
-| `workshop/agentmart_agent_ecosystem/` | Day 3 lab: LangGraph agents, A2A config, seeded catalog. |
+| `workshop/agentmart_agent_ecosystem/` | Day 3 lab: the `agentmart` package, A2A server, web console, seeded catalog. |
 | `slides/` | Lecture deck and the branded slide build script. |
 | `teleprompter_slides/` | Rendered slide images used by `teleprompter.html`. |
 | `teleprompter.html` | Presenter view for delivering the workshop. |
@@ -116,6 +116,7 @@ flowchart TD
         Pricing[Pricing Agent]
         Inventory[Inventory Agent]
         Fulfillment[Fulfillment Agent]
+        Shipping[Shipping Agent]
         Order[Order Agent]
     end
 
@@ -128,9 +129,32 @@ flowchart TD
     AgentMart --> Pricing
     Shopping --> Inventory
     Pricing --> Fulfillment
+    AgentMart --> Shipping
+    Shipping --> Order
     Inventory --> Order
     Fulfillment --> Order
 ```
+
+## What the Lab Actually Runs
+
+The conceptual design above is implemented and callable. Beyond the LangGraph
+agents themselves:
+
+- **A real A2A v1.0 server.** `a2a_server.py` serves an Agent Card at
+  `/.well-known/agent-card.json` and accepts JSON-RPC `SendMessage`, so Hermes — or
+  any A2A-compliant client — can discover and call the ecosystem. Without it the
+  lab's A2A never leaves the process.
+- **A web console** at `http://127.0.0.1:9901/console`: the agent graph with the
+  hops that ran lit and timed, a token bar per hop split into cached prompt, fresh
+  prompt, reasoning and completion, every prompt and reply as sent, and the order
+  book moving through its lifecycle live.
+- **A Hermes skill** that routes delivery-timing questions to the peer rather than
+  answering them from the model's own knowledge.
+- **A scenario suite** covering the customer flows and the invariants — intent
+  routing, agent hand-offs, batching, and documentation drift.
+
+See `workshop/agentmart_agent_ecosystem/` for setup, and its `WALKTHROUGH.md` for a
+guided read of the code.
 
 ## Implemented Flow (Lab)
 
@@ -184,11 +208,19 @@ each agent's output and the A2A envelope Hermes sent.
 | Pricing Agent | AgentMart | Checks pricing, discounts, and affordability. |
 | Inventory Agent | AgentMart | Confirms stock and availability. |
 | Fulfillment Agent | AgentMart | Handles delivery or pickup constraints. |
+| Shipping Agent | AgentMart | Quotes dispatch and delivery dates — calculated, never invented. |
 | Order Agent | AgentMart | Finalizes the purchase workflow. |
+| Payment Agent | AgentMart | Settles a **simulated** payment; no processor is contacted. |
 
 In the lab, the Shopping, Pricing, Inventory, and Fulfillment agents read a seeded
 catalog (`workshop/agentmart_agent_ecosystem/data/products.json`) so they reason over
 real SKUs, prices, stock levels, and delivery options rather than invented ones.
+
+The Shipping Agent goes a step further: its dates come from `shipping.py`, which
+computes dispatch and delivery from warehouse calendars, a 15:00 cut-off and
+per-warehouse holidays. The agent is told to quote them and explain them, never to
+compute or adjust one. Every prompt in the lab forbids inventing a delivery date,
+and handing the model real dates is the only way to hold that line.
 
 ## Workshop Progression
 

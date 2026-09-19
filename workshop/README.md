@@ -28,20 +28,40 @@ AgentMart Agent Ecosystem
    +-- Pricing Agent
    +-- Inventory Agent
    +-- Fulfillment Agent
+   +-- Shipping Agent (simulated dates)
    +-- Order Agent
    +-- Payment Agent (simulated)
 ```
 
 The lab includes:
 
-- a LangGraph workflow for the AgentMart agent group
-- an OpenRouter-backed OpenAI-compatible model client
+- a LangGraph workflow for the AgentMart agent group, one module per agent
+- a model client that shapes its request per endpoint (OpenRouter or OpenAI direct)
 - a Hermes/MyShopper A2A sender node, with a correlated envelope per agent hop
+- **a real A2A v1.0 server** (`a2a_server.py`), so an outside agent can actually call
+  the ecosystem: Agent Card discovery, JSON-RPC, 19 capabilities across 7 agents
 - intent routing, so a status question does not wake the whole ecosystem
+- a **Shipping Agent** whose dates are calculated in Python, never written by a model
 - a seeded order book and a simulated Payment Agent
-- `hermes_a2a_config.json`, which defines the Hermes agent identity, A2A connection, heartbeat stream, capability registry, intent routing, and target AgentMart agents
-- a scenario suite covering the end-to-end customer flows
+- a **web console** showing the graph, token flow, every prompt and reply, and the
+  order book moving through its lifecycle live
+- a **Hermes skill** that routes delivery-timing questions to the peer over A2A
+- a response cache and an optional batched worker pass, both off the critical path
+  of correctness: nothing that writes is ever cached
+- a scenario suite covering the customer flows *and* the invariants — intent
+  routing, agent hand-offs, batching, and documentation drift
 - dry-run mode for testing the workflow without an API key
+
+### Documentation
+
+| File | What it covers |
+| --- | --- |
+| `agentmart_agent_ecosystem/README.md` | Setup, configuration, running the lab |
+| `WALKTHROUGH.md` | Guided read of the code: one request end to end |
+| `A2A_API.md` | The A2A surface: discovery, wire format, capabilities, envelopes |
+| `TESTING.md` | Test prompts for all three layers, and how to find a bottleneck |
+| `BENCHMARK.md` | Model comparison and the measurements behind the choices |
+| `SKILLS.md` | Writing a Hermes skill that routes to an A2A peer |
 
 ## Quick Start
 

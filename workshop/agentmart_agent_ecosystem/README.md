@@ -107,7 +107,7 @@ check honest by updating what each agent declares it reads.
 | `test_scenarios.py` | End-to-end scenario suite for the Hermes + A2A flows. |
 | `a2a_server.py` | Serves the ecosystem over A2A v1.0 so a real agent can call it. |
 | `TESTING.md` | End-to-end test prompts for all three layers, plus A2A list/history. |
-| `A2A_API.md` | A2A reference: discovery, JSON-RPC wire, the 16 capabilities, envelopes. |
+| `A2A_API.md` | A2A reference: discovery, JSON-RPC wire, the 19 capabilities, envelopes. |
 | `WALKTHROUGH.md` | Guided read of the code: one request from Telegram to a grounded answer. |
 | `SKILLS.md` | Creating a Hermes skill that routes a question to an A2A peer. |
 | `shipping.py` | Deterministic dispatch/delivery dates: calendars, cut-off, holidays. |
@@ -572,7 +572,7 @@ python test_scenarios.py --live           # call OpenRouter for real
 | `list-products` | "List me the available products." | Browsing skips the Fulfillment Agent; real SKUs reach the prompts |
 | `buy-this` | "I want to buy this AM-EAR-1002." | A real draft order is created and stops at `awaiting_payment` |
 | `checkout-and-pay` | "Checkout and pay for my order." | The unpaid order is settled; a simulated receipt is written |
-| `product-advice` | "Find me wireless earbuds under $120." | The original full five-agent pipeline still runs |
+| `product-advice` | "Find me wireless earbuds under $120." | The original full recommendation pipeline still runs |
 | `buy-then-checkout` | purchase, then settle that order | Two turns on one order id = two distinct A2A tasks |
 
 Dry-run is the default, so the whole suite passes with **no OpenRouter key**:

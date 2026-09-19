@@ -202,7 +202,7 @@ Three things to read off it:
 ## Layer 2 — the A2A wire
 
 `A2A_API.md` is the reference for this layer: discovery, the JSON-RPC methods
-and error codes, which agent owns which of the 16 capabilities, and the envelope
+and error codes, which agent owns which of the 19 capabilities, and the envelope
 schema. What follows is how to exercise it.
 
 Proves the protocol without involving Hermes. Useful when layer 1 passes but
@@ -303,7 +303,7 @@ Only `agentmart` advertises it, so exactly one peer should answer.
 
 > List my a2a peers.
 
-**Pass:** `agentmart` at `http://127.0.0.1:9901`, auth none, 16 capabilities,
+**Pass:** `agentmart` at `http://127.0.0.1:9901`, auth none, 19 capabilities,
 plus the persisted conversations and a metrics line.
 
 > Show me the a2a history for ctx-dfc1682a50f3406a
