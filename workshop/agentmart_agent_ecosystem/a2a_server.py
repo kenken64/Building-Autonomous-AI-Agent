@@ -31,16 +31,19 @@ import sys
 import threading
 import time
 import uuid
-from collections import OrderedDict
+from collections import OrderedDict, deque
+from pathlib import Path
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from agentmart_ecosystem import (
     DEFAULT_CUSTOMER_ID,
+    INTENT_PATHS,
     classify_intent,
     load_hermes_a2a_config,
     run_agentmart,
+    set_trace_sink,
 )
 
 logger = logging.getLogger("agentmart.a2a")
@@ -112,6 +115,37 @@ def cache_clear(reason: str) -> None:
         _CACHE.clear()
     if count:
         logger.info("cache cleared (%d entr%s) — %s", count, "y" if count == 1 else "ies", reason)
+
+
+CONSOLE_HTML = (Path(__file__).with_name("console.html").read_text(encoding="utf-8")
+                if Path(__file__).with_name("console.html").exists()
+                else "<h1>console.html is missing next to a2a_server.py</h1>")
+
+# Recent runs, newest first, for the console. Bounded: this is a teaching aid, not
+# an observability backend, and the prompts it holds are large.
+_RUNS: "deque[dict]" = deque(maxlen=25)
+_RUNS_LOCK = threading.Lock()
+
+
+def record_run(intent: str, message: str, hops: list[dict], seconds: float, cached: bool) -> None:
+    totals = {
+        "prompt_tokens": sum(h["prompt_tokens"] for h in hops),
+        "cached_tokens": sum(h["cached_tokens"] for h in hops),
+        "completion_tokens": sum(h["completion_tokens"] for h in hops),
+        "reasoning_tokens": sum(h["reasoning_tokens"] for h in hops),
+    }
+    with _RUNS_LOCK:
+        _RUNS.appendleft({
+            "id": uuid.uuid4().hex[:12],
+            "at": now_iso(),
+            "intent": intent,
+            "message": message,
+            "seconds": round(seconds, 2),
+            "cached": cached,
+            "hops": hops,
+            "totals": totals,
+            "path": list(INTENT_PATHS.get(intent, ())),
+        })
 
 
 # Runtime options, set once from the CLI so the handler can read them.
@@ -263,6 +297,8 @@ def run_task(message: str) -> str:
             # that lies about what just ran.
             return cached + "\n[cached]"
 
+    hops: list[dict] = []
+    set_trace_sink(hops.append)
     started = time.time()
     state = run_agentmart(
         message,
@@ -274,6 +310,8 @@ def run_task(message: str) -> str:
         batch_workers=OPTIONS["batch_workers"],
     )
     elapsed = time.time() - started
+    set_trace_sink(None)
+    record_run(intent, message, hops, elapsed, cached=False)
     reply = render_reply(state)
     hops = len(state.get("transcript") or [])
     if key is not None:
@@ -302,6 +340,14 @@ class A2AHandler(BaseHTTPRequestHandler):
             return override.rstrip("/")
         host = self.headers.get("Host") or f"127.0.0.1:{self.server.server_address[1]}"
         return f"http://{host}"
+
+    def _send_html(self, html: str) -> None:
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _send_json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -333,6 +379,15 @@ class A2AHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "unauthorized"}, status=401)
                 return
             self._send_json(build_agent_card(self._public_url()))
+            return
+        if path == "/console":
+            self._send_html(CONSOLE_HTML)
+            return
+        if path == "/console/data":
+            with _RUNS_LOCK:
+                runs = list(_RUNS)
+            self._send_json({"runs": runs, "batching": OPTIONS["batch_workers"],
+                             "cache": OPTIONS["cache"]})
             return
         if path == "/health":
             self._send_json({"status": "ok", "dry_run": OPTIONS["dry_run"]})

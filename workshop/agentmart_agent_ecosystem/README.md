@@ -107,6 +107,10 @@ check honest by updating what each agent declares it reads.
 | `TESTING.md` | End-to-end test prompts for all three layers, plus A2A list/history. |
 | `A2A_API.md` | A2A reference: discovery, JSON-RPC wire, the 16 capabilities, envelopes. |
 | `WALKTHROUGH.md` | Guided read of the code: one request from Telegram to a grounded answer. |
+| `SKILLS.md` | Creating a Hermes skill that routes a question to an A2A peer. |
+| `shipping.py` | Deterministic dispatch/delivery dates: calendars, cut-off, holidays. |
+| `console.html` | Web console: the graph, token flow, prompts and responses per hop. |
+| `skills/agentmart/` | The shipping skill, ready to copy into `~/.hermes/skills/`. |
 | `BENCHMARK.md` | Model comparison and the reasoning behind the chosen model/effort. |
 | `SOUL.md` | Hermes persona plus the AgentMart routing rule; install to `~/.hermes/`. |
 | `data/products.json` | Source product catalog: products, stock, warehouses, delivery options. |
@@ -479,6 +483,30 @@ single call would make the replay lie about what ran.
 It is off by default for that reason. Turn it on to show the room the trade —
 same answer, same SKUs, 40% less time, two thirds fewer envelopes — rather than to
 hide it.
+
+## Web Console
+
+`a2a_server.py` serves a console at **http://127.0.0.1:9901/console** showing every
+run that passed through it.
+
+```bash
+./.venv/bin/python a2a_server.py      # then open the URL
+```
+
+- **Flow strip** — the agent graph with the hops that actually ran lit up and timed,
+  including the Shipping Agent.
+- **Per-hop rows** — duration, model, and a token bar split four ways: prompt served
+  from cache, fresh prompt, reasoning, visible completion. Cached prompt shows green,
+  so a working prefix cache is visible at a glance.
+- **Prompts and responses** — expand any hop for its system prompt, user prompt and
+  reply, exactly as sent.
+- **Run totals** — prompt, cached, completion and reasoning tokens.
+- **↻ Update shipping date** — fires a `shipping_estimate` task and draws the
+  `hermes_myshopper → shipping_agent → order_agent` path.
+
+It reads a bounded in-memory buffer of the last 25 runs, so nothing is persisted and
+restarting the server clears it. Dry runs are traced too, so the console can be
+demonstrated without spending anything.
 
 ## Seeded Order Book
 

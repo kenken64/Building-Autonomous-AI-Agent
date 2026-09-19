@@ -109,7 +109,7 @@ Neither changes the wire format. A caller sees an ordinary `Task` either way.
 
 ## 3. Capability map
 
-Sixteen capabilities across six agents. These are the `skills[].id` values on the
+Nineteen capabilities across seven agents. These are the `skills[].id` values on the
 Agent Card, and the same names appear in `hermes_a2a_config.json`.
 
 | Agent | Capability | Answers |
@@ -123,6 +123,9 @@ Agent Card, and the same names appear in `hermes_a2a_config.json`.
 | | `availability_risk` | Will thin stock or a restock delay this? |
 | **fulfillment** | `delivery_options` | Which delivery methods, at what ETA and cost? |
 | | `pickup_options` | Is locker or store pickup available? |
+| **shipping** | `shipping_estimate` | When does it dispatch and arrive? |
+| | `dispatch_date_simulation` | Which working day does it leave the warehouse? |
+| | `delivery_window_check` | Can it arrive by a given date? |
 | **order** | `order_summary` | What is in this order, and what does it total? |
 | | `order_status_lookup` | Where is it now — paid, packed, in transit, delivered? |
 | | `draft_order_create` | Create an unpaid draft for a chosen SKU. |
@@ -145,6 +148,7 @@ whole ecosystem.
 | Intent | Example | Agent path |
 | --- | --- | --- |
 | `order_status` | "What is my order status?" | order |
+| `shipping_estimate` | "When will my order arrive?" | shipping → order |
 | `browse_catalog` | "List me the available products." | shopping → pricing → inventory → order |
 | `product_advice` | "Find me earbuds under $120." | shopping → pricing → inventory → fulfillment → order |
 | `purchase_intent` | "I want to buy AM-EAR-1002." | inventory → fulfillment → order |

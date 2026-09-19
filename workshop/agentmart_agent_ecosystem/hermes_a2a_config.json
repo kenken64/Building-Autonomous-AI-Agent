@@ -15,7 +15,8 @@
       "customer_constraint_handoff",
       "agentmart_a2a_negotiation",
       "order_status_lookup",
-      "checkout_initiation"
+      "checkout_initiation",
+      "shipping_estimate_lookup"
     ],
     "model": {
       "provider": "openrouter",
@@ -83,6 +84,16 @@
         ]
       },
       {
+        "id": "shipping_agent",
+        "capabilities": [
+          "shipping_estimate",
+          "dispatch_date_simulation",
+          "delivery_window_check"
+        ],
+        "simulated": true,
+        "note": "Workshop shipping simulator. Dispatch and delivery dates are calculated in shipping.py from warehouse calendars and cut-off times, never written by the model; no carrier is contacted."
+      },
+      {
         "id": "order_agent",
         "capabilities": [
           "order_summary",
@@ -127,6 +138,10 @@
       "payment_agent"
     ],
     "order_status": [
+      "order_agent"
+    ],
+    "shipping_estimate": [
+      "shipping_agent",
       "order_agent"
     ]
   }

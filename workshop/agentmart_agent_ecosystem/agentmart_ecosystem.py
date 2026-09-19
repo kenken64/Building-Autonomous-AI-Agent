@@ -16,12 +16,29 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 
-from catalog import CatalogNotSeededError, format_product_listing, query_products
+from catalog import (
+    CatalogNotSeededError,
+    format_product_listing,
+    fulfillment_for_warehouses,
+    query_products,
+)
+from shipping import format_estimates, simulate_options
 
 # Per-hop timing. httpx logs when response *headers* arrive, not when the body is
 # read, so its lines understate a slow call and cannot be used to find the slowest
 # agent. These measure the whole call.
 logger = logging.getLogger("agentmart")
+
+# Optional trace sink. The console needs the prompt, the reply and the token counts
+# for every hop; the log line carries only the numbers. Set to a callable to receive
+# one dict per model call. Left None everywhere else so a CLI run costs nothing.
+TRACE_SINK: Callable[[dict[str, Any]], None] | None = None
+
+
+def set_trace_sink(sink: Callable[[dict[str, Any]], None] | None) -> None:
+    """Install (or clear) the per-hop trace callback."""
+    global TRACE_SINK
+    TRACE_SINK = sink
 from orders import (
     OrderBookNotSeededError,
     OrderNotFoundError,
@@ -42,6 +59,7 @@ AgentName = Literal[
     "pricing_agent",
     "inventory_agent",
     "fulfillment_agent",
+    "shipping_agent",
     "order_agent",
     "payment_agent",
 ]
@@ -55,6 +73,7 @@ Intent = Literal[
     "purchase_intent",
     "checkout_payment",
     "order_status",
+    "shipping_estimate",
 ]
 
 DEFAULT_CUSTOMER_ID = "CUST-1001"
@@ -80,6 +99,8 @@ class AgentMartState(TypedDict, total=False):
     pricing_result: str
     inventory_result: str
     fulfillment_result: str
+    shipping_result: str
+    shipping_estimates: str
     order_result: str
     payment_result: str
     draft_order: dict[str, Any]
@@ -164,7 +185,16 @@ class OpenRouterHermesClient:
 
     def complete(self, agent_name: str, system_prompt: str, user_prompt: str) -> str:
         if self.dry_run or not self.api_key:
-            return self._dry_run_reply(agent_name, user_prompt)
+            reply = self._dry_run_reply(agent_name, user_prompt)
+            # Trace dry runs too, so the console can be demonstrated without spend.
+            if TRACE_SINK is not None:
+                TRACE_SINK({
+                    "agent": agent_name, "model": "(dry-run)", "seconds": 0.0,
+                    "system_prompt": system_prompt, "user_prompt": user_prompt,
+                    "response": reply, "prompt_tokens": 0, "cached_tokens": 0,
+                    "completion_tokens": 0, "reasoning_tokens": 0, "finish_reason": "dry_run",
+                })
+            return reply
 
         from openai import OpenAI
 
@@ -219,6 +249,20 @@ class OpenRouterHermesClient:
             getattr(details, "reasoning_tokens", "?") if details else "?",
             len(content), response.choices[0].finish_reason,
         )
+        if TRACE_SINK is not None:
+            TRACE_SINK({
+                "agent": agent_name,
+                "model": self.model,
+                "seconds": round(elapsed, 2),
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "response": content,
+                "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                "cached_tokens": (getattr(prompt_details, "cached_tokens", 0) or 0) if prompt_details else 0,
+                "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                "reasoning_tokens": (getattr(details, "reasoning_tokens", 0) or 0) if details else 0,
+                "finish_reason": response.choices[0].finish_reason,
+            })
         return content
 
     @staticmethod
@@ -266,6 +310,20 @@ INTENT_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"check\s?out\b(?!\s*(?:step|steps|process|flow|page|link|option|details))|"
             r"\bpay\s+now\b|place\s+the\s+order|settle\s+(up|the\s+bill)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        # 1b. Date questions about delivery. Ahead of the status rule because "where
+        # is my order" and "when will it arrive" want different agents -- the second
+        # needs simulated dates, not a status row.
+        "shipping_estimate",
+        re.compile(
+            r"when\s+(will|would|can|do)\s+.*(arrive|deliver|ship|get\s+here|reach)|"
+            r"how\s+(long|many\s+days)\s+.*(deliver|ship|arriv)|"
+            r"delivery\s+(date|estimate|eta)|shipping\s+(date|estimate|eta|options?)|"
+            r"\beta\b|estimated\s+(delivery|arrival)|"
+            r"(get|have)\s+it\s+by\b|arrive\s+(by|before)\b",
             re.IGNORECASE,
         ),
     ),
@@ -729,6 +787,78 @@ def batched_workers_node(state: AgentMartState) -> AgentMartState:
     return delta
 
 
+SHIPPING_AGENT_SYSTEM_PROMPT = (
+    "You are the AgentMart Shipping Agent. You are given simulated dispatch and delivery "
+    "dates that were CALCULATED for you, with the reason behind each. Never compute, adjust, "
+    "or invent a date: quote the ones you are given and explain them. Say plainly that the "
+    "estimate is simulated. Answer in compact lines, 500 characters or fewer."
+)
+
+
+def shipping_agent_node(state: AgentMartState) -> AgentMartState:
+    """Dates are computed in shipping.py; this agent only explains them.
+
+    Every other prompt in this lab forbids inventing a delivery date. The only way to
+    hold that line is to hand the model real dates, so the arithmetic happens in
+    Python and the model never sees a reason to guess.
+    """
+    intent = state.get("intent", "shipping_estimate")
+    order_id = state.get("target_order_id")
+    envelope = emit_envelope(
+        state, sender="hermes_myshopper", recipient="shipping_agent", intent=intent,
+        payload={"capability": "shipping_estimate", "order_id": order_id}, lifecycle="accepted",
+    )
+
+    placed_at = None
+    warehouses = ["SG-CENTRAL", "MY-JB", "US-WEST"]
+    if order_id:
+        try:
+            order = get_order(order_id)
+            placed_at = order.get("placed_at")
+            if order.get("warehouse"):
+                warehouses = [order["warehouse"]]
+        except (OrderNotFoundError, OrderBookNotSeededError):
+            pass  # no such order: fall back to a general estimate across warehouses
+
+    try:
+        options = fulfillment_for_warehouses(warehouses)
+        options = options if isinstance(options, list) else sum(options.values(), [])
+        estimates = format_estimates(simulate_options(options, placed_at))
+    except CatalogNotSeededError as exc:
+        estimates = f"(fulfillment options unavailable: {exc})"
+
+    client = OpenRouterHermesClient(
+        dry_run=state.get("dry_run", False),
+        model_config=model_config_from_state(state),
+        model_override=worker_model(state),
+    )
+    result = client.complete(
+        "shipping_agent",
+        SHIPPING_AGENT_SYSTEM_PROMPT,
+        json.dumps({
+            "customer_request": state["customer_request"],
+            "order_id": order_id,
+            "order_placed_at": placed_at,
+            "calculated_estimates": estimates,
+            "instruction": (
+                "Answer the customer's timing question using only the calculated "
+                "estimates above. One line per option. State that these are simulated."
+            ),
+        }, indent=2),
+    )
+    done = emit_envelope(
+        state, sender="shipping_agent", recipient="hermes_myshopper", intent=intent,
+        payload={"result_chars": len(result), "options": len(estimates.splitlines())},
+        lifecycle="completed",
+    )
+    return {
+        "transcript": [transcript_entry("shipping_agent", result, envelope)],
+        "a2a_log": [envelope, done],
+        "shipping_result": result,
+        "shipping_estimates": estimates,
+    }
+
+
 ORDER_AGENT_SYSTEM_PROMPT = (
     "You are the AgentMart Order Agent. You speak to Hermes/MyShopper, which relays to the customer. "
     "Work only from the order book and agent results you are given. Never invent an order id, "
@@ -750,6 +880,23 @@ def _order_agent_prompt(state: AgentMartState) -> str:
         "intent": intent,
         "customer_id": state.get("customer_id"),
     }
+
+    if intent == "shipping_estimate":
+        return json.dumps(
+            {
+                **common,
+                "order_book": state.get("order_context", ""),
+                # Already-calculated dates. The Order Agent relays them; it must not
+                # recompute or round them, and must not answer if they are missing.
+                "shipping_result": state.get("shipping_result", "(agent not on this path)"),
+                "instruction": (
+                    "Answer the customer's timing question using the Shipping Agent's "
+                    "result. Quote its dates exactly and say the estimate is simulated. "
+                    "If the shipping result is missing, say so instead of estimating."
+                ),
+            },
+            indent=2,
+        )
 
     if intent == "order_status":
         return json.dumps(
@@ -974,6 +1121,9 @@ INTENT_PATHS: dict[str, tuple[str, ...]] = {
     "purchase_intent": ("inventory_agent", "fulfillment_agent", "order_agent"),
     "checkout_payment": ("order_agent", "payment_agent"),
     "order_status": ("order_agent",),
+    # Dates come from shipping.py, not from the model; the Order Agent then speaks
+    # to the customer using them.
+    "shipping_estimate": ("shipping_agent", "order_agent"),
 }
 
 
@@ -1028,6 +1178,7 @@ def build_graph():
     graph.add_node("inventory_agent", inventory_agent_node)
     graph.add_node("fulfillment_agent", fulfillment_agent_node)
     graph.add_node("order_agent", order_agent_node)
+    graph.add_node("shipping_agent", shipping_agent_node)
     graph.add_node("payment_agent", payment_agent_node)
     graph.add_node(BATCHED_NODE, batched_workers_node)
 
@@ -1039,6 +1190,7 @@ def build_graph():
         "pricing_agent",
         "inventory_agent",
         "fulfillment_agent",
+        "shipping_agent",
         "order_agent",
         "payment_agent",
     ]
