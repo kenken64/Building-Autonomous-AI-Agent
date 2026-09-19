@@ -26,9 +26,12 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
+import threading
 import time
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -58,6 +61,59 @@ ERR_UNAUTHORIZED = -32050
 # ``SendMessage`` is the v1.0 method name; the pre-1.0 path style still shows up in the wild.
 SEND_METHODS = {"SendMessage", "message/send", "tasks/send"}
 
+# Response cache. A workshop demo asks the same question many times, and the whole
+# six-agent chain is deterministic given the same catalog, so replaying the stored
+# answer turns ~25s into single-digit milliseconds.
+#
+# Only READ-ONLY intents are eligible. purchase_intent writes a draft order and
+# checkout_payment captures a (simulated) payment -- replaying either would report
+# work that never happened. order_status is excluded too: it is read-only but its
+# answer changes the moment any order does, so a hit would show a stale order.
+CACHEABLE_INTENTS = frozenset({"product_advice", "browse_catalog"})
+# These change the order book, so anything cached before them may now be wrong.
+INVALIDATING_INTENTS = frozenset({"purchase_intent", "checkout_payment"})
+
+_CACHE: "OrderedDict[tuple, tuple[float, str]]" = OrderedDict()
+_CACHE_LOCK = threading.Lock()
+
+
+def cache_key(intent: str, message: str, customer_id: str) -> tuple:
+    """Case- and whitespace-insensitive, but otherwise literal: near-miss questions
+    deserve a real answer, not a neighbour's."""
+    return (intent, customer_id, re.sub(r"\s+", " ", message.strip().lower()))
+
+
+def cache_get(key: tuple) -> str | None:
+    ttl = OPTIONS["cache_ttl"]
+    with _CACHE_LOCK:
+        hit = _CACHE.get(key)
+        if hit is None:
+            return None
+        stored_at, reply = hit
+        if time.time() - stored_at > ttl:
+            del _CACHE[key]
+            return None
+        _CACHE.move_to_end(key)
+        return reply
+
+
+def cache_put(key: tuple, reply: str) -> None:
+    size = OPTIONS["cache_size"]
+    with _CACHE_LOCK:
+        _CACHE[key] = (time.time(), reply)
+        _CACHE.move_to_end(key)
+        while len(_CACHE) > size:
+            _CACHE.popitem(last=False)
+
+
+def cache_clear(reason: str) -> None:
+    with _CACHE_LOCK:
+        count = len(_CACHE)
+        _CACHE.clear()
+    if count:
+        logger.info("cache cleared (%d entr%s) — %s", count, "y" if count == 1 else "ies", reason)
+
+
 # Runtime options, set once from the CLI so the handler can read them.
 OPTIONS: dict[str, Any] = {
     "dry_run": False,
@@ -66,6 +122,9 @@ OPTIONS: dict[str, Any] = {
     "token": "",
     "show_hops": True,
     "config_path": None,
+    "cache": True,
+    "cache_ttl": 600.0,
+    "cache_size": 128,
 }
 
 
@@ -192,6 +251,17 @@ def render_reply(state: dict) -> str:
 def run_task(message: str) -> str:
     intent = classify_intent(message)
     logger.info("A2A task received: intent=%s text=%r", intent, message[:120])
+
+    cacheable = OPTIONS["cache"] and intent in CACHEABLE_INTENTS
+    key = cache_key(intent, message, OPTIONS["customer_id"]) if cacheable else None
+    if key is not None:
+        cached = cache_get(key)
+        if cached is not None:
+            logger.info("A2A task done: served from cache in 0.0s")
+            # Marked, always. A demo that silently replays a stored answer is a demo
+            # that lies about what just ran.
+            return cached + "\n[cached]"
+
     started = time.time()
     state = run_agentmart(
         message,
@@ -204,6 +274,11 @@ def run_task(message: str) -> str:
     elapsed = time.time() - started
     reply = render_reply(state)
     hops = len(state.get("transcript") or [])
+    if key is not None:
+        cache_put(key, reply)
+    elif intent in INVALIDATING_INTENTS:
+        # The order book just moved; anything stored may describe the world before it.
+        cache_clear(f"{intent} changed the order book")
     # The per-agent `PERF agent=...` lines above this one carry the breakdown; this
     # is the total a caller actually waited for, so the two can be compared directly.
     logger.info('A2A task done: %d hop(s) in %.1fs — the per-hop PERF lines above have the breakdown',
@@ -324,6 +399,12 @@ def main() -> None:
     parser.add_argument("--config", help="Path to Hermes A2A configuration JSON.")
     parser.add_argument("--no-hops", action="store_true",
                         help="Return only the final answer, without the A2A hop trail.")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="Never replay a stored answer, even for a repeated question.")
+    parser.add_argument("--cache-ttl", type=float, default=600.0,
+                        help="Seconds a cached answer stays valid (default 600).")
+    parser.add_argument("--cache-size", type=int, default=128,
+                        help="Maximum cached answers (default 128).")
     parser.add_argument("--verbose", action="store_true", help="Debug logging.")
     args = parser.parse_args()
 
@@ -339,6 +420,9 @@ def main() -> None:
         token=os.getenv("AGENTMART_A2A_TOKEN", ""),
         show_hops=not args.no_hops,
         config_path=args.config,
+        cache=not args.no_cache,
+        cache_ttl=args.cache_ttl,
+        cache_size=args.cache_size,
     )
 
     if args.host != "127.0.0.1" and not OPTIONS["token"]:
@@ -354,6 +438,9 @@ def main() -> None:
     logger.info("AgentMart A2A server on %s", base)
     logger.info("Agent Card: %s/.well-known/agent-card.json", base)
     logger.info("Auth: %s | dry-run: %s", "bearer token" if OPTIONS["token"] else "none (localhost)", args.dry_run)
+    logger.info("Cache: %s — read-only intents only (%s); replies marked [cached]",
+                f"on, ttl {args.cache_ttl:.0f}s, max {args.cache_size}" if not args.no_cache else "off",
+                ", ".join(sorted(CACHEABLE_INTENTS)))
     try:
         server.serve_forever()
     except KeyboardInterrupt:
