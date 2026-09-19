@@ -105,6 +105,7 @@ check honest by updating what each agent declares it reads.
 | `test_scenarios.py` | End-to-end scenario suite for the Hermes + A2A flows. |
 | `a2a_server.py` | Serves the ecosystem over A2A v1.0 so a real agent can call it. |
 | `TESTING.md` | End-to-end test prompts for all three layers, plus A2A list/history. |
+| `A2A_API.md` | A2A reference: discovery, JSON-RPC wire, the 16 capabilities, envelopes. |
 | `BENCHMARK.md` | Model comparison and the reasoning behind the chosen model/effort. |
 | `SOUL.md` | Hermes persona plus the AgentMart routing rule; install to `~/.hermes/`. |
 | `data/products.json` | Source product catalog: products, stock, warehouses, delivery options. |

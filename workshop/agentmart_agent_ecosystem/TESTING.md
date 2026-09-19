@@ -161,6 +161,10 @@ replies mean the token budget is being eaten by reasoning — see Troubleshootin
 
 ## Layer 2 — the A2A wire
 
+`A2A_API.md` is the reference for this layer: discovery, the JSON-RPC methods
+and error codes, which agent owns which of the 16 capabilities, and the envelope
+schema. What follows is how to exercise it.
+
 Proves the protocol without involving Hermes. Useful when layer 1 passes but
 layer 3 fails.
 
