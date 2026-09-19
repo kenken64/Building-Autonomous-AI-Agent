@@ -97,7 +97,9 @@ check honest by updating what each agent declares it reads.
 
 | File | Purpose |
 | --- | --- |
-| `agentmart_ecosystem.py` | LangGraph implementation of Hermes/MyShopper plus AgentMart agents. |
+| `agentmart_ecosystem.py` | Entry point: the CLI, and a re-export of the `agentmart` package. |
+| `agentmart/` | The implementation: state, client, intents, context, prompts, graph. |
+| `agentmart/agents/` | One module per agent — workers, myshopper, shipping, order, payment, batched. |
 | `hermes_a2a_config.json` | Hermes agent configuration for the A2A connection into AgentMart. |
 | `seed_data.py` | Seeds the product listing from `data/products.json` into SQLite. |
 | `catalog.py` | Query helpers the agents use to read the seeded listing. |

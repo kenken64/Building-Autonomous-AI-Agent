@@ -446,7 +446,8 @@ def check_batched_workers() -> list[Check]:
 # Documentation drift. WALKTHROUGH.md cites `symbol` (file.py:line); those line
 # numbers went stale the first time the file grew, and a walkthrough that points at
 # the wrong line is worse than one that points at nothing.
-DOC_REF_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)`\s*\((a2a_server\.py|agentmart_ecosystem\.py):(\d+)\)")
+DOC_REF_RE = re.compile(
+    r"`([A-Za-z_][A-Za-z0-9_]*)`\s*\(((?:[A-Za-z0-9_]+/)*[A-Za-z0-9_]+\.py):(\d+)\)")
 
 
 def check_doc_refs() -> list[Check]:
@@ -455,12 +456,17 @@ def check_doc_refs() -> list[Check]:
     doc = here / "WALKTHROUGH.md"
     if not doc.exists():
         return [expect("WALKTHROUGH.md exists", False)]
-    sources = {name: (here / name).read_text().splitlines()
-               for name in ("a2a_server.py", "agentmart_ecosystem.py")}
+    # Any module in the lab, including the agentmart package.
+    sources = {str(f.relative_to(here)): f.read_text().splitlines()
+               for f in sorted(here.rglob("*.py"))
+               if ".venv" not in f.parts and "__pycache__" not in f.parts}
     refs = {(s, f, int(n)) for s, f, n in DOC_REF_RE.findall(doc.read_text())}
     checks: list[Check] = [expect("WALKTHROUGH.md carries line references", bool(refs))]
     for symbol, filename, line in sorted(refs, key=lambda r: (r[1], r[2])):
-        lines = sources[filename]
+        lines = sources.get(filename)
+        if lines is None:
+            checks.append(expect(f"{filename} exists", False))
+            continue
         actual = lines[line - 1] if 0 < line <= len(lines) else ""
         checks.append(expect(f"{filename}:{line} defines {symbol}", symbol in actual))
     return checks

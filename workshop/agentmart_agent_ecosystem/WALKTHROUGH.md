@@ -1,11 +1,42 @@
 # AgentMart Code Walkthrough
 
 A guided read of the lab, following one customer request from a Telegram message
-to a grounded answer. Line numbers are for `agentmart_ecosystem.py` (1,099 lines)
-and `a2a_server.py` (452 lines) unless noted.
+to a grounded answer.
 
 Read this with the files open. Each section says what to look at, what it does,
 and — where it matters — why it is written that way rather than the obvious way.
+References are `symbol` (file:line) and are asserted by
+`test_scenarios.py -s doc-refs`, so a line number here is either right or the
+suite is red.
+
+## Where the code lives
+
+```
+agentmart_ecosystem.py .... entry point: the CLI, and a re-export of the package
+agentmart/
+  state.py ................ AgentMartState, A2AEnvelope, transcript/envelope helpers
+  client.py ............... the model client, per-endpoint shaping, PERF + trace
+  intents.py .............. the routing rules and each intent's agent path
+  context.py .............. catalog, order book, Hermes A2A config
+  prompts.py .............. the cacheable system prefix every worker shares
+  agents/
+    base.py ............... the worker factory
+    workers.py ............ Shopping, Pricing, Inventory, Fulfillment
+    myshopper.py .......... Hermes/MyShopper, the lab's own buying agent
+    shipping.py ........... quotes dates; never computes them
+    order.py .............. the only hop that writes
+    payment.py ............ simulated payments
+    batched.py ............ every worker in one call, opt-in
+  graph.py ................ wiring, routing, run_agentmart()
+a2a_server.py ............. the A2A v1.0 front door, cache and console
+shipping.py ............... deterministic dispatch/delivery date arithmetic
+console.html .............. the web console
+```
+
+Nothing that imported `agentmart_ecosystem` had to change: it re-exports the
+package's public surface and keeps the command line, so
+`from agentmart_ecosystem import run_agentmart` and every documented command work
+exactly as before.
 
 ---
 
@@ -35,7 +66,7 @@ separates them properly.
 
 ## 1. The state that flows through the graph
 
-`AgentMartState` (agentmart_ecosystem.py:82) is a `TypedDict` carrying everything a hop might need: the
+`AgentMartState` (agentmart/state.py:49) is a `TypedDict` carrying everything a hop might need: the
 request, the intent, the product listing, each agent's result, the draft order,
 and two accumulating lists.
 
@@ -53,11 +84,11 @@ Returning the full list under a reducer would concatenate it with itself.
 
 ## 2. The A2A envelope
 
-`A2AEnvelope` (agentmart_ecosystem.py:112) is the teaching artifact: one record per hop, carrying
+`A2AEnvelope` (agentmart/state.py:79) is the teaching artifact: one record per hop, carrying
 `task_id`, `sender`, `recipient`, `intent`, `payload`, `state`, and a
 `correlation_id` shared by every hop of one request.
 
-`emit_envelope` (agentmart_ecosystem.py:439) builds one and **returns it without touching state**.
+`emit_envelope` (agentmart/state.py:113) builds one and **returns it without touching state**.
 It used to append to `state["a2a_log"]` directly. That was fine while hops ran in
 sequence and became a bug the moment they did not, so it is pure now and callers
 hand the envelopes back as a delta.
@@ -66,7 +97,7 @@ Lifecycle: `proposed → accepted → in_progress → completed | failed`.
 
 ## 3. The model client
 
-`OpenRouterHermesClient` (agentmart_ecosystem.py:145) resolves settings in one order and shapes the request per
+`OpenRouterHermesClient` (agentmart/client.py:38) resolves settings in one order and shapes the request per
 endpoint. Two things to notice.
 
 **Endpoint detection.** `openai_native` is true when the base URL is
@@ -99,7 +130,7 @@ Read the order carefully — it encodes hard-won distinctions:
 4. Weaker payment wording, only once a status reading is ruled out.
 5. `buy` only when intentional: "wants to buy" is intent, "where to buy" is advice.
 
-`strip_prohibitions` (agentmart_ecosystem.py:384) runs **before** any rule. A remote agent states
+`strip_prohibitions` (agentmart/intents.py:115) runs **before** any rule. A remote agent states
 its guardrails inline — "do not charge or capture payment" — and those clauses
 name the exact capability they forbid. Without the strip, a prohibition routes
 straight to the Payment Agent. That is not hypothetical: it once settled a
@@ -111,7 +142,7 @@ wakes Shopping and Pricing.
 
 ## 5. The shared, cacheable prefix
 
-`SHARED_AGENT_SYSTEM` (agentmart_ecosystem.py:492) holds the catalog and is **identical for every worker
+`SHARED_AGENT_SYSTEM` (agentmart/prompts.py:23) holds the catalog and is **identical for every worker
 agent**. OpenAI reuses an identical leading span across calls, halving prefill
 latency, but only if it comes first and is byte-identical.
 
@@ -121,7 +152,7 @@ nowhere near the front. Both would break the cache.
 
 ## 6. The worker agents
 
-`make_agent_node` (agentmart_ecosystem.py:517) is a factory. Each worker gets a role, a prompt builder, an
+`make_agent_node` (agentmart/agents/base.py:18) is a factory. Each worker gets a role, a prompt builder, an
 output key and a capability name, and returns a delta:
 
 ```python
@@ -174,9 +205,9 @@ are local.
 
 ## 7b. Batching the worker hops — optional
 
-`batched_workers_node` (agentmart_ecosystem.py:754) runs every worker on the
-intent's path in **one** model call, and `effective_path` (agentmart_ecosystem.py:1148) collapses the path when `batch_workers` is set.
-`split_sections` (agentmart_ecosystem.py:736) parses the reply back into the
+`batched_workers_node` (agentmart/agents/batched.py:76) runs every worker on the
+intent's path in **one** model call, and `effective_path` (agentmart/graph.py:45) collapses the path when `batch_workers` is set.
+`split_sections` (agentmart/agents/batched.py:56) parses the reply back into the
 individual `*_result` keys, so the Order Agent receives exactly what it would
 have.
 
@@ -198,7 +229,7 @@ headings is a real loss for a workshop about agent ecosystems. Measured
 15:00 dispatch cut-off and per-warehouse holidays. No model is involved, so the same
 inputs give the same answer and a test can assert on it.
 
-`shipping_agent_node` (agentmart_ecosystem.py:806) receives those dates and is told
+`shipping_agent_node` (agentmart/agents/shipping.py:33) receives those dates and is told
 never to compute, adjust or invent one — only to quote and explain them. Every other
 prompt in this lab forbids inventing a delivery date; handing the model real dates is
 the only way to hold that line.
@@ -209,14 +240,14 @@ different agents.
 
 ## 8. Building and running the graph
 
-`INTENT_PATHS` (agentmart_ecosystem.py:1118) maps each intent to its agent sequence. `route_from_hermes` picks
+`INTENT_PATHS` (agentmart/intents.py:159) maps each intent to its agent sequence. `route_from_hermes` picks
 the first hop; `_next_after` follows the path and falls off to `END`.
 `build_graph` wires conditional edges from every node to every other, and the
 routers decide.
 
-`run_agentmart` (agentmart_ecosystem.py:1244) assembles the initial state — including
+`run_agentmart` (agentmart/graph.py:153) assembles the initial state — including
 `classify_intent` and `load_product_listing` — invokes the graph, and passes the
-result through `normalize_ordering` (agentmart_ecosystem.py:1224), which sorts the transcript and
+result through `normalize_ordering` (agentmart/graph.py:131), which sorts the transcript and
 A2A log into the declared path order. With a sequential pipeline they already
 arrive in order, so it is a guard rather than a necessity.
 
@@ -275,10 +306,10 @@ gateway never pays.
 
 | Question | Look at |
 | --- | --- |
-| Why is a prohibition not an instruction? | `strip_prohibitions` (agentmart_ecosystem.py:384) |
-| Why is the catalog in the system message? | `SHARED_AGENT_SYSTEM` (agentmart_ecosystem.py:492) |
-| Why do nodes return deltas? | the reducers on `AgentMartState` (agentmart_ecosystem.py:82) |
-| Why is `emit_envelope` pure? | `emit_envelope` (agentmart_ecosystem.py:439) |
+| Why is a prohibition not an instruction? | `strip_prohibitions` (agentmart/intents.py:115) |
+| Why is the catalog in the system message? | `SHARED_AGENT_SYSTEM` (agentmart/prompts.py:23) |
+| Why do nodes return deltas? | the reducers on `AgentMartState` (agentmart/state.py:49) |
+| Why is `emit_envelope` pure? | `emit_envelope` (agentmart/state.py:113) |
 | Why is the path sequential? | README, "The arrows are load-bearing" |
-| Why is the model client endpoint-aware? | `OpenRouterHermesClient` (agentmart_ecosystem.py:145) |
+| Why is the model client endpoint-aware? | `OpenRouterHermesClient` (agentmart/client.py:38) |
 | Why can't a checkout be cached? | `CACHEABLE_INTENTS` (a2a_server.py:75) |
