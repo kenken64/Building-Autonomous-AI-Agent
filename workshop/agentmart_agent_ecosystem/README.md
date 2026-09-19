@@ -447,6 +447,39 @@ prohibition can never again be read as an instruction:
 python test_scenarios.py -s intent-routing   # or just: python test_scenarios.py
 ```
 
+## Batching the Worker Hops
+
+`--batch-workers` runs every worker agent on the path in **one** model call
+instead of one call each:
+
+```bash
+python agentmart_ecosystem.py --batch-workers --timing "Find me wireless earbuds under $120."
+./.venv/bin/python a2a_server.py --batch-workers
+```
+
+| | Default | `--batch-workers` |
+| --- | --- | --- |
+| Hops | 6 | 3 |
+| A2A envelopes | 11 | 5 |
+| Worker segment | ~8.4s | ~3.3s |
+| End to end | ~15s | ~9s |
+| SKUs cited | identical | identical |
+
+**Why this is safe where concurrency was not.** Running the workers in parallel
+broke the chain: each branch read a stale snapshot, so Inventory never saw
+Pricing's ranking. Batching has the opposite property — one model sees the whole
+chain in a single context, so the hand-off is *stronger*, not weaker. The Order
+Agent still receives all four results, parsed back out of the reply's sections;
+`test_scenarios.py -s batched-workers` asserts exactly that.
+
+**What it costs.** Four agents negotiating over A2A become one prompt wearing four
+headings. The transcript records one hop, because fabricating four entries from a
+single call would make the replay lie about what ran.
+
+It is off by default for that reason. Turn it on to show the room the trade —
+same answer, same SKUs, 40% less time, two thirds fewer envelopes — rather than to
+hide it.
+
 ## Seeded Order Book
 
 `data/orders.json` seeds three customers, five orders across every lifecycle

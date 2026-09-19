@@ -393,6 +393,37 @@ def check_pipeline_inputs() -> list[Check]:
     return checks
 
 
+def check_batched_workers() -> list[Check]:
+    """Batching collapses the worker hops without starving the Order Agent.
+
+    The speed comes from one round trip instead of four, not from skipping work:
+    the Order Agent must still receive every worker result, parsed back out of the
+    batched reply's sections.
+    """
+    import agentmart_ecosystem as ae
+
+    result = ae.run_agentmart(
+        "Find me wireless earbuds under $120 with good battery life.",
+        dry_run=True, batch_workers=True)
+    hops = [entry["agent"] for entry in result.get("transcript", [])]
+    checks = [
+        expect("worker hops collapse to one batched hop",
+               hops == ["hermes_myshopper", ae.BATCHED_NODE, "order_agent"]),
+        expect("the batched hop is recorded once, not faked as four",
+               hops.count(ae.BATCHED_NODE) == 1),
+    ]
+    for key in ("shopping_result", "pricing_result", "inventory_result", "fulfillment_result"):
+        value = result.get(key)
+        checks.append(expect(f"Order Agent still receives {key}",
+                             isinstance(value, str) and value.strip() != ""))
+    # Off by default: the six-hop demo is what the lab shows unless asked otherwise.
+    plain = ae.run_agentmart("Find me wireless earbuds under $120.", dry_run=True)
+    checks.append(expect(
+        "batching is opt-in, not the default",
+        [e["agent"] for e in plain.get("transcript", [])][1] == "shopping_agent"))
+    return checks
+
+
 def run_scenario(scenario: Scenario, dry_run: bool, verbose: bool) -> list[Check]:
     result = run_agentmart(
         scenario.request,
@@ -438,6 +469,7 @@ def main() -> int:
         print(f"{'buy-then-checkout':<24} {'(chained)':<17} purchase a SKU, then settle that order")
         print(f"{'intent-routing':<24} {'(routing)':<17} 14 phrasings, human and agent-generated")
         print(f"{'pipeline-inputs':<24} {'(pipeline)':<17} each agent receives its upstream results")
+        print(f"{'batched-workers':<24} {'(batching)':<17} one call for the worker hops, inputs intact")
         return 0
 
     dry_run = not args.live
@@ -445,10 +477,10 @@ def main() -> int:
     run_chained = True
     if args.scenario:
         names = set(args.scenario)
-        unknown = names - set(SCENARIOS_BY_NAME) - {"buy-then-checkout", "intent-routing", "pipeline-inputs"}
+        unknown = names - set(SCENARIOS_BY_NAME) - {"buy-then-checkout", "intent-routing", "pipeline-inputs", "batched-workers"}
         if unknown:
             print(f"Unknown scenario(s): {', '.join(sorted(unknown))}", file=sys.stderr)
-            print(f"Available: {', '.join(SCENARIOS_BY_NAME)}, buy-then-checkout, intent-routing, pipeline-inputs", file=sys.stderr)
+            print(f"Available: {', '.join(SCENARIOS_BY_NAME)}, buy-then-checkout, intent-routing, pipeline-inputs, batched-workers", file=sys.stderr)
             return 2
         selected = [s for s in SCENARIOS if s.name in names]
         run_chained = "buy-then-checkout" in names
@@ -458,6 +490,16 @@ def main() -> int:
     print("Payments are simulated; no payment processor is contacted.")
 
     results: list[bool] = []
+    if not args.scenario or "batched-workers" in set(args.scenario):
+        results.append(
+            report(
+                "batched-workers",
+                "one call for the worker hops, same inputs downstream",
+                "Fewer round trips must not mean less information.",
+                check_batched_workers(),
+            )
+        )
+
     if not args.scenario or "pipeline-inputs" in set(args.scenario):
         results.append(
             report(

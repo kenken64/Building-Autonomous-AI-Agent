@@ -122,6 +122,7 @@ OPTIONS: dict[str, Any] = {
     "token": "",
     "show_hops": True,
     "config_path": None,
+    "batch_workers": False,
     "cache": True,
     "cache_ttl": 600.0,
     "cache_size": 128,
@@ -270,6 +271,7 @@ def run_task(message: str) -> str:
         config_path=OPTIONS["config_path"],
         customer_id=OPTIONS["customer_id"],
         intent=intent,
+        batch_workers=OPTIONS["batch_workers"],
     )
     elapsed = time.time() - started
     reply = render_reply(state)
@@ -399,6 +401,9 @@ def main() -> None:
     parser.add_argument("--config", help="Path to Hermes A2A configuration JSON.")
     parser.add_argument("--no-hops", action="store_true",
                         help="Return only the final answer, without the A2A hop trail.")
+    parser.add_argument("--batch-workers", action="store_true",
+                        help="Run every worker agent on the path in ONE model call "
+                             "(~1.7x faster end to end; collapses four demo hops into one).")
     parser.add_argument("--no-cache", action="store_true",
                         help="Never replay a stored answer, even for a repeated question.")
     parser.add_argument("--cache-ttl", type=float, default=600.0,
@@ -420,6 +425,7 @@ def main() -> None:
         token=os.getenv("AGENTMART_A2A_TOKEN", ""),
         show_hops=not args.no_hops,
         config_path=args.config,
+        batch_workers=args.batch_workers,
         cache=not args.no_cache,
         cache_ttl=args.cache_ttl,
         cache_size=args.cache_size,
@@ -438,9 +444,13 @@ def main() -> None:
     logger.info("AgentMart A2A server on %s", base)
     logger.info("Agent Card: %s/.well-known/agent-card.json", base)
     logger.info("Auth: %s | dry-run: %s", "bearer token" if OPTIONS["token"] else "none (localhost)", args.dry_run)
-    logger.info("Cache: %s — read-only intents only (%s); replies marked [cached]",
-                f"on, ttl {args.cache_ttl:.0f}s, max {args.cache_size}" if not args.no_cache else "off",
-                ", ".join(sorted(CACHEABLE_INTENTS)))
+    logger.info("Workers: %s", "BATCHED into one call per task"
+                if args.batch_workers else "one call per agent (six-hop demo)")
+    if args.no_cache:
+        logger.info("Cache: off — every task runs the full chain")
+    else:
+        logger.info("Cache: on, ttl %.0fs, max %d — read-only intents only (%s); replies marked [cached]",
+                    args.cache_ttl, args.cache_size, ", ".join(sorted(CACHEABLE_INTENTS)))
     try:
         server.serve_forever()
     except KeyboardInterrupt:
