@@ -503,6 +503,14 @@ run that passed through it.
 - **Run totals** — prompt, cached, completion and reasoning tokens.
 - **↻ Update shipping date** — fires a `shipping_estimate` task and draws the
   `hermes_myshopper → shipping_agent → order_agent` path.
+- **Order book** — every order as a card in a lifecycle column (awaiting payment →
+  paid → packed → in transit → delivered, with cancelled at the end), showing total,
+  amount paid, items, ETA and tracking. Read live on each poll, so a purchase or
+  checkout moves a card while you watch, and the card flashes when its state changes.
+
+It is responsive: the flow strip becomes a vertical stack on a phone rather than a
+sideways scroll, type scales fluidly with the viewport, and `console.html` is read
+per request — edit it and reload, no restart.
 
 It reads a bounded in-memory buffer of the last 25 runs, so nothing is persisted and
 restarting the server clears it. Dry runs are traced too, so the console can be

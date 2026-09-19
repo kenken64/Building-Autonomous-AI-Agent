@@ -117,14 +117,57 @@ def cache_clear(reason: str) -> None:
         logger.info("cache cleared (%d entr%s) — %s", count, "y" if count == 1 else "ies", reason)
 
 
-CONSOLE_HTML = (Path(__file__).with_name("console.html").read_text(encoding="utf-8")
-                if Path(__file__).with_name("console.html").exists()
-                else "<h1>console.html is missing next to a2a_server.py</h1>")
+def console_html() -> str:
+    """Read console.html per request, so editing the console needs no restart.
+
+    It is a local file read of a few KB against a page the browser is about to
+    render; the cost is invisible next to the request that follows it.
+    """
+    path = Path(__file__).with_name("console.html")
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return f"<h1>console.html could not be read</h1><pre>{exc}</pre>"
 
 # Recent runs, newest first, for the console. Bounded: this is a teaching aid, not
 # an observability backend, and the prompts it holds are large.
 _RUNS: "deque[dict]" = deque(maxlen=25)
 _RUNS_LOCK = threading.Lock()
+
+
+# Lifecycle order for the board, not alphabetical: a workshop reads it left to right.
+ORDER_STATES = ("awaiting_payment", "paid", "packed", "in_transit", "delivered", "cancelled")
+
+
+def order_board() -> list[dict]:
+    """Every order with the fields the console shows. Read live, never cached --
+    a purchase or checkout during the demo must move a card immediately."""
+    try:
+        from orders import OrderBookNotSeededError, list_orders
+    except ImportError:
+        return []
+    try:
+        rows = list_orders(limit=100)
+    except OrderBookNotSeededError:
+        return []
+    out = []
+    for o in rows:
+        payments = o.get("payments") or []
+        out.append({
+            "order_id": o.get("order_id"),
+            "customer_id": o.get("customer_id"),
+            "status": o.get("status"),
+            "total_usd": float(o.get("total_usd") or 0),
+            "paid_usd": float(o.get("amount_paid_usd") or 0),
+            "placed_at": (o.get("placed_at") or "")[:10],
+            "eta_date": o.get("eta_date") or "",
+            "warehouse": o.get("warehouse") or "",
+            "method": o.get("fulfillment_method") or "",
+            "tracking": o.get("tracking_ref") or "",
+            "processor_ref": (payments[-1].get("processor_ref") if payments else ""),
+            "items": [f"{i.get('quantity')}x {i.get('sku')}" for i in (o.get("items") or [])],
+        })
+    return out
 
 
 def record_run(intent: str, message: str, hops: list[dict], seconds: float, cached: bool) -> None:
@@ -381,7 +424,10 @@ class A2AHandler(BaseHTTPRequestHandler):
             self._send_json(build_agent_card(self._public_url()))
             return
         if path == "/console":
-            self._send_html(CONSOLE_HTML)
+            self._send_html(console_html())
+            return
+        if path == "/console/orders":
+            self._send_json({"orders": order_board()})
             return
         if path == "/console/data":
             with _RUNS_LOCK:

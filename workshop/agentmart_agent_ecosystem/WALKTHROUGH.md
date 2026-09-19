@@ -227,7 +227,7 @@ arrive in order, so it is a guard rather than a necessity.
 Without this file the lab's A2A never leaves the process and no outside agent can
 call it.
 
-**Discovery** — `build_agent_card` (a2a_server.py:219) advertises every AgentMart
+**Discovery** — `build_agent_card` (a2a_server.py:262) advertises every AgentMart
 capability as an A2A skill tagged with its owning agent, served at
 `/.well-known/agent-card.json`.
 
