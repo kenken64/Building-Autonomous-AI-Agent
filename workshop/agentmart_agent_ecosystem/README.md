@@ -500,27 +500,51 @@ run that passed through it.
 ./.venv/bin/python a2a_server.py      # then open the URL
 ```
 
-- **Flow strip** — the agent graph with the hops that actually ran lit up and timed,
-  including the Shipping Agent.
+- **Overview dashboard** — available executions, average latency, token usage,
+  estimated token cost in USD, and active orders, with a live connection indicator.
+- **Agent map** — the agents that ran are highlighted and timed. Select an execution
+  to view its path; click an active agent to open its exact trace.
 - **Per-hop rows** — duration, model, and a token bar split four ways: prompt served
   from cache, fresh prompt, reasoning, visible completion. Cached prompt shows green,
   so a working prefix cache is visible at a glance.
 - **Prompts and responses** — expand any hop for its system prompt, user prompt and
   reply, exactly as sent.
-- **Run totals** — prompt, cached, completion and reasoning tokens.
-- **↻ Update shipping date** — fires a `shipping_estimate` task and draws the
+- **Searchable, paginated traces** — filter requests, intents, or agents and show
+  5, 10, or 25 executions per page. Expanded prompts survive background refreshes.
+- **Run totals** — prompt, cached, completion and reasoning tokens, plus estimated
+  cost per run and per agent hop.
+- **Token pricing** — published model rates load from OpenRouter’s public model
+  catalog, with editable input, cached-input, and output rates per million tokens.
+  Custom rates stay in your browser and can be reset individually. A verified
+  GPT-5.6 Luna rate is bundled as a fallback. Unknown rates are marked as missing
+  rather than counted as free; totals with missing rates show a partial estimate.
+- **Request composer** — product and tracking presets, an agent-response viewer,
+  explicit error states, and Cmd/Ctrl+Enter to submit.
+- **Update shipping** — uses an available in-transit order, fires a
+  `shipping_estimate` task, and draws the
   `hermes_myshopper → shipping_agent → order_agent` path.
 - **Order book** — every order as a card in a lifecycle column (awaiting payment →
   paid → packed → in transit → delivered, with cancelled at the end), showing total,
   amount paid, items, ETA and tracking. Read live on each poll, so a purchase or
   checkout moves a card while you watch, and the card flashes when its state changes.
 
-It is responsive: the flow strip becomes a vertical stack on a phone rather than a
-sideways scroll, type scales fluidly with the viewport, and `console.html` is read
-per request — edit it and reload, no restart.
+The layout adapts to desktop, tablet, and phone screens without horizontal page
+scrolling. It includes keyboard navigation, visible focus states, and reduced-motion
+support. `console.html` is read per request — edit it and reload, no restart.
 
-It reads a bounded in-memory buffer of the last 25 runs, so nothing is persisted and
-restarting the server clears it. Dry runs are traced too, so the console can be
+Token estimates use `(fresh input × input rate + cached input × cache rate +
+completion × output rate) / 1,000,000`. Reasoning is already part of completion
+and is not charged twice. Published context-length pricing tiers are applied when
+available. If no cache rate is published, the input rate is used. These are current-rate
+token estimates, not historical invoices: provider-specific, cache-write, and tool
+fees are excluded. The pricing lookup sends no prompts or API keys and refreshes
+hourly independently of the local dashboard. See the
+[OpenRouter pricing schema](https://openrouter.ai/docs/guides/overview/models#pricing-object)
+and the bundled [GPT-5.6 Luna pricing source](https://developers.openai.com/api/docs/models/gpt-5.6-luna)
+(verified 2026-09-20).
+
+Execution history uses a bounded in-memory buffer of the last 25 runs; traces are
+not persisted, and restarting the server clears them. Dry runs are traced too, so the console can be
 demonstrated without spending anything.
 
 ## Seeded Order Book
